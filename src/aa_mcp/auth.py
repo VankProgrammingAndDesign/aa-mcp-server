@@ -33,7 +33,7 @@ class AuthClient:
         return self._token  # type: ignore[return-value]
 
     async def _authenticate(self, http_client: httpx.AsyncClient) -> None:
-        url = f"{self._settings.control_room_url}/v1/authentication"
+        url = f"{self._settings.control_room_url}/v2/authentication"
         payload = {
             "username": self._settings.username,
             "apiKey": self._settings.api_key,

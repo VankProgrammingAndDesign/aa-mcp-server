@@ -26,7 +26,7 @@ _client: ControlRoomClient | None = None
 async def lifespan(app: FastMCP):
     global _client
     auth = AuthClient(settings)
-    http = httpx.AsyncClient(timeout=settings.http_timeout_seconds)
+    http = httpx.AsyncClient(timeout=settings.http_timeout_seconds, verify=settings.ssl_verify)
     _client = ControlRoomClient(settings, auth, http)
     try:
         yield
@@ -59,8 +59,8 @@ async def list_devices(name_filter: str | None = None) -> list[dict[str, Any]]:
     """
     List bot runner devices registered in the Control Room.
     Use name_filter to search by hostname substring.
-    Returns id, hostname, status, and username for each device.
-    Call this first when you need a device_id for deploy_bot.
+    Returns id, hostname, status, pool, default_user_id, and default_username for each device.
+    Use default_user_id as the run_as_user_id when calling deploy_bot.
     """
     return await bots.list_devices(get_client(), name_filter=name_filter)
 
@@ -116,9 +116,8 @@ async def list_run_history(
 @mcp.tool()
 async def list_queues(name_filter: str | None = None) -> list[dict[str, Any]]:
     """
-    List WLM queues with item counts by status.
-    Returns id, name, status, and counts: pending, in_progress, completed, failed.
-    Use queue id with get_queue_detail to inspect individual work items.
+    List WLM queues. Returns id, name, status, and description for each queue.
+    Use get_queue_detail to get item counts and work item status breakdown for a specific queue.
     Requires AAE_Queue Admin role on the service account.
     """
     return await wlm.list_queues(get_client(), name_filter=name_filter)

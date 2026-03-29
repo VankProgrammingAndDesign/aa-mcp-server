@@ -7,33 +7,20 @@ async def list_queues(
     client: ControlRoomClient,
     name_filter: str | None = None,
 ) -> list[dict[str, Any]]:
-    body: dict[str, Any] = {
-        "page": {"offset": 0, "length": 200},
-    }
+    body: dict[str, Any] = {"page": {"offset": 0, "length": 200}}
     if name_filter:
-        body["filter"] = {
-            "operator": "substring",
-            "field": "name",
-            "value": name_filter,
-        }
+        body["filter"] = {"operator": "substring", "field": "name", "value": name_filter}
 
-    data = await client.post("/v2/wlm/queues/list", body)
-    items = data.get("list", [])
-
-    results = []
-    for item in items:
-        stats = item.get("workItemStatistics", {})
-        results.append({
+    data = await client.post("/v3/wlm/queues/list", body)
+    return [
+        {
             "id": str(item.get("id", "")),
             "name": item.get("name", ""),
             "status": item.get("status", ""),
-            "pending_count": stats.get("readyCount", 0),
-            "in_progress_count": stats.get("inProgressCount", 0),
-            "completed_count": stats.get("completedCount", 0),
-            "failed_count": stats.get("failedCount", 0),
-        })
-
-    return results
+            "description": item.get("description", ""),
+        }
+        for item in data.get("list", [])
+    ]
 
 
 async def get_queue_detail(
@@ -42,21 +29,14 @@ async def get_queue_detail(
     status_filter: str | None = None,
     limit: int = 200,
 ) -> dict[str, Any]:
-    body: dict[str, Any] = {
-        "page": {"offset": 0, "length": limit},
-    }
+    body: dict[str, Any] = {"page": {"offset": 0, "length": limit}}
     if status_filter:
-        body["filter"] = {
-            "operator": "eq",
-            "field": "status",
-            "value": status_filter.upper(),
-        }
+        body["filter"] = {"operator": "eq", "field": "status", "value": status_filter.upper()}
 
-    data = await client.post(f"/v2/wlm/queues/{queue_id}/workitems/list", body)
+    data = await client.post(f"/v3/wlm/queues/{queue_id}/workitems/list", body)
     items = data.get("list", [])
     total_available = data.get("page", {}).get("totalFilter", len(items))
 
-    # Build status breakdown from returned items
     breakdown: dict[str, int] = {}
     for item in items:
         s = item.get("status", "UNKNOWN")
@@ -68,7 +48,7 @@ async def get_queue_detail(
             "status": item.get("status", ""),
             "created_at": item.get("createdOn", ""),
             "updated_at": item.get("updatedOn", ""),
-            "error": item.get("comment") or None,
+            "error": item.get("error") or item.get("comments") or None,
         }
         for item in items
     ]

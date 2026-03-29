@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     token_refresh_buffer_seconds: int = 60
     http_timeout_seconds: int = 30
     log_level: str = "WARNING"
+    ssl_verify: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="AA_",
