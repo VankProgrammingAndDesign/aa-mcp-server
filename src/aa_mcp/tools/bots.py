@@ -77,14 +77,15 @@ async def deploy_bot(
     body: dict[str, Any] = {
         "fileId": int(bot_id),
         "botInput": {},
+        "runAsUserIds": [int(run_as_user_id)],
         "currentUserDeviceCredentialMappings": [
             {
-                "deviceId": int(device_id),
-                "runAsUserIds": [int(run_as_user_id)],
+                "userId": int(run_as_user_id),
+                "credentialType": "DEVICE",
+                "deviceCredentials": [{"deviceId": int(device_id)}],
             }
         ],
         "scheduleType": "INSTANT",
-        "poolIds": [],
     }
     data = await client.post("/v3/automations/deploy", body)
     return {
