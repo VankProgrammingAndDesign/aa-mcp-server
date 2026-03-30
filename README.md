@@ -1,6 +1,8 @@
 # Automation Anywhere Control Room MCP Server
 
-A Model Context Protocol (MCP) server for the Automation Anywhere Control Room API. Use Claude Code to trigger bots, check run history, and query WLM queues.
+The first open-source MCP server for Automation Anywhere Control Room. Connect Claude Code directly to your Control Room to trigger bots, inspect run history, and query WLM queues.
+
+> **Note:** Automation Anywhere released native inbound MCP support in v38 (their platform receives connections from external agents). This server is the reverse — it exposes Control Room as an MCP tool server so Claude and other MCP clients can drive it directly.
 
 ## Prerequisites
 
