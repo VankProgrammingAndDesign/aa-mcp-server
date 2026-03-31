@@ -97,6 +97,28 @@ When deploying a bot, Control Room requires a credential mapping that specifies 
 
 ---
 
+## Bot package analysis
+
+**What is bot package analysis?**
+The `load_bot_package`, `list_bot_actions`, `get_bot_variables`, `get_bot_structure`, and `search_bot_actions` tools parse A360 bot export ZIP files stored on your local machine. They require no Control Room connection and work without any API credentials.
+
+**Which file format do these tools accept?**
+A360 export ZIPs exported from Control Room. To export: open Control Room, go to Bots, select the bots or folders you want, and use Export. The ZIP contains bot definition files, screenshots, and JAR packages.
+
+**Do these tools work with Community Edition?**
+Yes. The export format is the same across Community Edition, cloud-hosted, and on-premises A360 deployments.
+
+**How do I use these tools?**
+Call `load_bot_package` first with the absolute path to the ZIP file. It returns the bot names found in the package. Pass those names to `list_bot_actions`, `get_bot_variables`, or `get_bot_structure` for deeper analysis. Use `search_bot_actions` to find all actions of a specific type across every bot in the package.
+
+**What packages does the parser support?**
+The parser reads all standard A360 packages. It handles nested actions (If, Loop, Step bodies), error handler catch blocks (ErrorHandler branches), subtask references (TaskBot/runTask), and all variable types. Recorder capture attributes are included in `get_bot_structure` output.
+
+**Does the parser modify the ZIP file?**
+No. All tools are read-only.
+
+---
+
 ## Authentication
 
 **How often does the JWT token refresh?**
