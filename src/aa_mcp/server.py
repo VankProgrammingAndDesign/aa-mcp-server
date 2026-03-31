@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from aa_mcp.auth import AuthClient
 from aa_mcp.client import ControlRoomClient
 from aa_mcp.models.config import get_settings
-from aa_mcp.tools import activity, bots, wlm
+from aa_mcp.tools import activity, bots, packages, wlm
 
 settings = get_settings()
 
@@ -139,6 +139,63 @@ async def get_queue_detail(
     return await wlm.get_queue_detail(
         get_client(), queue_id=queue_id, status_filter=status_filter, limit=limit
     )
+
+
+@mcp.tool()
+async def load_bot_package(zip_path: str) -> dict[str, Any]:
+    """
+    Load and summarize an Automation Anywhere A360 bot export ZIP file.
+    zip_path: absolute path to a local .zip export file from Control Room.
+    Returns manifest metadata, bot names found, packages in use, and a file count summary.
+    Call this first before using list_bot_actions, get_bot_variables, get_bot_structure, or search_bot_actions.
+    """
+    return await packages.load_bot_package(zip_path)
+
+
+@mcp.tool()
+async def list_bot_actions(zip_path: str, bot_name: str) -> dict[str, Any]:
+    """
+    List all action nodes in a bot in execution order, including nested actions with depth.
+    zip_path: path to the export ZIP. bot_name: exact name from load_bot_package.
+    Returns package, command, label, depth, uid, output_variables, and subtask_path for each action.
+    TaskBot/runTask actions include subtask_path showing which subtask is called.
+    Use get_bot_structure for full nested hierarchy with action attributes.
+    """
+    return await packages.list_bot_actions(zip_path, bot_name)
+
+
+@mcp.tool()
+async def get_bot_variables(zip_path: str, bot_name: str) -> dict[str, Any]:
+    """
+    Get all variables defined in a bot with types, scope, and default values.
+    zip_path: path to the export ZIP. bot_name: exact name from load_bot_package.
+    Returns a variable list plus by_type and by_scope indexes for quick lookup.
+    Scope values: input, output, workItem, local.
+    """
+    return await packages.get_bot_variables(zip_path, bot_name)
+
+
+@mcp.tool()
+async def get_bot_structure(zip_path: str, bot_name: str) -> dict[str, Any]:
+    """
+    Get the full nested action structure of a bot including all attributes and branches.
+    zip_path: path to the export ZIP. bot_name: exact name from load_bot_package.
+    Returns a nested tree with action attributes for deep inspection of what each action does.
+    branches contain ErrorHandler catch blocks. Use list_bot_actions for a flat overview instead.
+    """
+    return await packages.get_bot_structure(zip_path, bot_name)
+
+
+@mcp.tool()
+async def search_bot_actions(zip_path: str, action_type: str) -> dict[str, Any]:
+    """
+    Search all bots in a package for actions matching a package or command name.
+    zip_path: path to the export ZIP. action_type: substring matched case-insensitively.
+    Examples: "Recorder" (screen captures), "TaskBot" (subtask calls), "Database",
+    "Email", "Excel", "REST", "Loop", "If".
+    Returns matches across all bots with bot name, position, and action details.
+    """
+    return await packages.search_bot_actions(zip_path, action_type)
 
 
 def main() -> None:
