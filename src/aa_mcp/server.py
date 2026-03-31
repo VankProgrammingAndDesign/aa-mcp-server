@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from aa_mcp.auth import AuthClient
 from aa_mcp.client import ControlRoomClient
 from aa_mcp.models.config import get_settings
-from aa_mcp.tools import activity, bots, packages, wlm
+from aa_mcp.tools import activity, bots, migration, packages, wlm
 
 settings = get_settings()
 
@@ -196,6 +196,37 @@ async def search_bot_actions(zip_path: str, action_type: str) -> dict[str, Any]:
     Returns matches across all bots with bot name, position, and action details.
     """
     return await packages.search_bot_actions(zip_path, action_type)
+
+
+@mcp.tool()
+async def summarize_bot_process(zip_path: str, bot_name: str) -> dict[str, Any]:
+    """
+    Analyse an AA bot and return a structured process summary for UiPath migration.
+    zip_path: absolute path to the export ZIP. bot_name: exact name from load_bot_package.
+    Returns variable mappings with UiPath argument types, step-by-step activity mappings
+    with status (mapped/partial/todo), sub-bots called, error handling pattern,
+    external systems detected, required NuGet packages, and coverage statistics.
+    Call this before generate_uipath_template to review the mapping before committing.
+    """
+    return await migration.summarize_bot_process(zip_path, bot_name)
+
+
+@mcp.tool()
+async def generate_uipath_template(
+    zip_path: str, bot_name: str, output_path: str
+) -> dict[str, Any]:
+    """
+    Convert an AA bot to a complete UiPath project folder ready to open in Studio.
+    zip_path: absolute path to the export ZIP. bot_name: exact name from load_bot_package.
+    output_path: directory to write the project into (created if absent).
+    Writes project.json, a primary .xaml workflow, and .xaml files for each direct
+    sub-bot called (full workflow if present in ZIP, stub if not).
+    Mapped steps get real WF4 activities. Partial/unmapped steps become named
+    [PARTIAL] or [TODO] Sequence placeholders visible in Studio.
+    Returns files written, coverage stats, and manual review notes for every step
+    that needs attention.
+    """
+    return await migration.generate_uipath_template(zip_path, bot_name, output_path)
 
 
 def main() -> None:
