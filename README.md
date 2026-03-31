@@ -83,6 +83,8 @@ See [CLAUDE-CODE-INSTALL.md](CLAUDE-CODE-INSTALL.md) for a Claude Code-specific 
 
 ## Available Tools
 
+### Control Room
+
 | Tool | Description |
 |---|---|
 | `list_bots` | List available bots, with optional name filter |
@@ -92,6 +94,18 @@ See [CLAUDE-CODE-INSTALL.md](CLAUDE-CODE-INSTALL.md) for a Claude Code-specific 
 | `list_run_history` | Query past runs by bot name, status, or date range |
 | `list_queues` | List WLM queues with item counts by status |
 | `get_queue_detail` | Get work items from a specific queue |
+
+### Bot Package Analysis
+
+These tools parse local A360 export ZIP files. No Control Room connection required.
+
+| Tool | Description |
+|---|---|
+| `load_bot_package` | Load an A360 export ZIP and return bot names, packages in use, and file counts. Call this first. |
+| `list_bot_actions` | List all actions in a bot in execution order, with depth, package, command, and subtask paths |
+| `get_bot_variables` | Get all variables defined in a bot with types, scope, and default values |
+| `get_bot_structure` | Get the full nested action hierarchy including attributes and error handler branches |
+| `search_bot_actions` | Search all bots in a package for actions matching a package or command name |
 
 ## Example Prompts
 
@@ -110,6 +124,13 @@ Claude calls `list_bots` to find the bot ID, `list_devices` to find the device I
 **Queue reporting:**
 > "Give me a status summary of all WLM queues"
 > "Show me the failed items in the AP Processing queue"
+
+**Analyze a bot package:**
+> "Load the bot package at /path/to/Export.zip and summarize the overall process"
+> "What subtasks does MasterBot call, and in what order?"
+> "What are the input and output variables for SubTask_Login?"
+> "Show me all the FTP upload actions across every bot in this package"
+> "Walk me through the error handling structure in this bot"
 
 ## Environment Variables
 
