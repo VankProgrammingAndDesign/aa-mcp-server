@@ -218,15 +218,7 @@ def _flatten_nodes(
         uid = node.get("uid", "")
 
         # Output variables from returnTo mapping
-        return_to = node.get("returnTo", {})
-        output_vars: list[str] = []
-        if isinstance(return_to, dict):
-            raw_dict = return_to.get("dictionary", [])
-            output_vars = [
-                entry.get("key", "")
-                for entry in raw_dict
-                if entry.get("key")
-            ]
+        output_vars: list[str] = _extract_output_vars(node)
 
         # Subtask path for TaskBot/runTask
         subtask_path = ""
@@ -287,6 +279,32 @@ def _extract_node_label(node: dict[str, Any]) -> str:
                     return text
 
     return cmd or pkg
+
+
+def _extract_output_vars(node: dict[str, Any]) -> list[str]:
+    """
+    Extract output variable name(s) from a node's returnTo field.
+
+    A360 uses two formats:
+    - returnTo.variableName (string) — most single-output commands (String.assign, etc.)
+    - returnTo.dictionary  (list)   — multi-output commands (Database.select, etc.)
+    """
+    return_to = node.get("returnTo", {})
+    if not isinstance(return_to, dict):
+        return []
+
+    # Multi-output: dictionary list with key entries
+    raw_dict = return_to.get("dictionary", [])
+    vars_from_dict = [e.get("key", "") for e in raw_dict if e.get("key")]
+    if vars_from_dict:
+        return vars_from_dict
+
+    # Single-output: direct variableName string
+    var_name = return_to.get("variableName", "")
+    if var_name:
+        return [var_name]
+
+    return []
 
 
 def _extract_subtask_path(node: dict[str, Any]) -> str:
@@ -359,6 +377,11 @@ def build_structure(nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         if pkg == "TaskBot" and cmd == "runTask":
             entry["subtask_path"] = _extract_subtask_path(node)
+
+        # Output variables — used by XAML generator for richer DisplayNames
+        out_vars = _extract_output_vars(node)
+        if out_vars:
+            entry["output_variables"] = out_vars
 
         result.append(entry)
 

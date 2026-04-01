@@ -22,6 +22,7 @@ from typing import Any
 
 from aa_mcp.uipath.mapper import (
     MAPPED, PARTIAL, TODO,
+    _ASSIGN_COMMANDS,
     lookup_mapping, sanitize_filename,
 )
 
@@ -177,9 +178,10 @@ def _process_node(
             if subtask_path else label
         )
         xaml_file = sanitize_filename(subtask_name) + ".xaml"
+        display_name = f"Run {subtask_name}" if subtask_name else label
         lines.append(
             f'{i}<ui:InvokeWorkflowFile'
-            f' DisplayName="{_attr(label)}"'
+            f' DisplayName="{_attr(display_name)}"'
             f' WorkflowFileName="{_attr(xaml_file)}" />'
         )
         return
@@ -219,12 +221,13 @@ def _process_node(
     # ── General case: container nodes (have children) ─────────────────────────
     if children:
         mapping = lookup_mapping(pkg, cmd)
+        rich_label = _enrich_label(node, label, pkg, cmd)
         if mapping.status == MAPPED:
-            dn = label
+            dn = rich_label
         elif mapping.status == PARTIAL:
-            dn = f"[PARTIAL] {label} | AA: {pkg}.{cmd} | {mapping.notes}"
+            dn = f"[PARTIAL] {rich_label} | AA: {pkg}.{cmd} | {mapping.notes}"
         else:
-            dn = f"[TODO] {label} | AA: {pkg}.{cmd} | {mapping.notes}"
+            dn = f"[TODO] {rich_label} | AA: {pkg}.{cmd} | {mapping.notes}"
         lines.append(f'{i}<Sequence DisplayName="{_attr(dn)}">')
         _process_nodes(children, lines, indent + 2)
         lines.append(f"{i}</Sequence>")
@@ -232,12 +235,13 @@ def _process_node(
 
     # ── Leaf nodes ────────────────────────────────────────────────────────────
     mapping = lookup_mapping(pkg, cmd)
+    rich_label = _enrich_label(node, label, pkg, cmd)
     if mapping.status == MAPPED:
-        dn = label
+        dn = rich_label
     elif mapping.status == PARTIAL:
-        dn = f"[PARTIAL] {label} | AA: {pkg}.{cmd} | {mapping.notes}"
+        dn = f"[PARTIAL] {rich_label} | AA: {pkg}.{cmd} | {mapping.notes}"
     else:
-        dn = f"[TODO] {label} | AA: {pkg}.{cmd} | {mapping.notes}"
+        dn = f"[TODO] {rich_label} | AA: {pkg}.{cmd} | {mapping.notes}"
 
     lines.append(f'{i}<Sequence DisplayName="{_attr(dn)}" />')
 
@@ -352,6 +356,27 @@ def _write_if(
     lines.append(f"{i1}</If.Else>")
 
     lines.append(f"{i0}</If>")
+
+
+# ── Label enrichment ──────────────────────────────────────────────────────────
+
+def _enrich_label(
+    node: dict[str, Any],
+    label: str,
+    pkg: str,
+    cmd: str,
+) -> str:
+    """
+    Return a more descriptive label for a node where possible.
+
+    - Assign-type commands with output_variables → "Assign → varName"
+    - TaskBot/runTask → handled separately in _process_node (uses subtask_path)
+    - All others → original label unchanged
+    """
+    out_vars = node.get("output_variables", [])
+    if out_vars and cmd.lower() in _ASSIGN_COMMANDS:
+        return f"Assign \u2192 {out_vars[0]}"
+    return label
 
 
 # ── String helpers ─────────────────────────────────────────────────────────────

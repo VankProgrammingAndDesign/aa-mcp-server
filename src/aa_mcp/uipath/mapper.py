@@ -196,8 +196,13 @@ def lookup_mapping(package: str, command: str) -> ActivityMapping:
 
 
 def sanitize_filename(name: str) -> str:
-    """Convert a bot name to a safe filesystem/XML class name stem."""
-    safe = re.sub(r"[^\w\-]", "_", name)
+    """Convert a bot name to a safe filesystem/XML class name stem.
+
+    & is replaced with 'And' for readability (e.g. T&M → TAndM).
+    All other non-word characters become underscores.
+    """
+    safe = name.replace("&", "And")
+    safe = re.sub(r"[^\w\-]", "_", safe)
     safe = re.sub(r"_+", "_", safe)
     return safe.strip("_") or "Bot"
 
@@ -221,11 +226,31 @@ def _map_variable(var: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+_ASSIGN_COMMANDS = frozenset({
+    "assign", "concatenate", "substring", "split", "trim",
+    "toupper", "tolower", "contains", "replace", "tostring", "add",
+    "subtract", "multiply", "divide", "increment", "decrement",
+})
+
+
 def _map_action(action: dict[str, Any]) -> dict[str, Any]:
     pkg = action.get("package", "")
     cmd = action.get("command", "")
     mapping = lookup_mapping(pkg, cmd)
-    label = action.get("label", "") or cmd or pkg
+    output_vars = action.get("output_variables", [])
+    raw_label = action.get("label", "") or cmd or pkg
+
+    # Improve labels for common patterns
+    if pkg == "TaskBot" and cmd == "runTask":
+        path = action.get("subtask_path", "")
+        sub_name = path.rstrip("/").split("/")[-1] if path else raw_label
+        label = f"Run {sub_name}"
+    elif cmd.lower() in _ASSIGN_COMMANDS and output_vars:
+        target = output_vars[0]
+        label = f"Assign \u2192 {target}"  # → arrow
+    else:
+        label = raw_label
+
     return {
         "index": action.get("index", 0),
         "depth": action.get("depth", 0),
