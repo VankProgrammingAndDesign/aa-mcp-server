@@ -9,7 +9,7 @@ from mcp.server.fastmcp import FastMCP
 from aa_mcp.auth import AuthClient
 from aa_mcp.client import ControlRoomClient
 from aa_mcp.models.config import get_settings
-from aa_mcp.tools import activity, bots, migration, packages, wlm
+from aa_mcp.tools import activity, bots, migration, packages, uipath_validator, wlm
 
 settings = get_settings()
 
@@ -201,12 +201,14 @@ async def search_bot_actions(zip_path: str, action_type: str) -> dict[str, Any]:
 @mcp.tool()
 async def summarize_bot_process(zip_path: str, bot_name: str) -> dict[str, Any]:
     """
-    Analyse an AA bot and return a structured process summary for UiPath migration.
+    Parse an AA bot and return a structured process summary for UiPath migration.
     zip_path: absolute path to the export ZIP. bot_name: exact name from load_bot_package.
     Returns variable mappings with UiPath argument types, step-by-step activity mappings
     with status (mapped/partial/todo), sub-bots called, error handling pattern,
-    external systems detected, required NuGet packages, and coverage statistics.
-    Call this before generate_uipath_template to review the mapping before committing.
+    external systems, required NuGet packages, and coverage statistics.
+    Also returns a documentation key with pdd (Process Definition Document in Markdown)
+    and architecture_overview (Architecture Overview in Markdown) as in-memory strings.
+    Call this before generate_uipath_template to inspect the mapping first.
     """
     return await migration.summarize_bot_process(zip_path, bot_name)
 
@@ -219,14 +221,30 @@ async def generate_uipath_template(
     Convert an AA bot to a complete UiPath project folder ready to open in Studio.
     zip_path: absolute path to the export ZIP. bot_name: exact name from load_bot_package.
     output_path: directory to write the project into (created if absent).
-    Writes project.json, a primary .xaml workflow, and .xaml files for each direct
-    sub-bot called (full workflow if present in ZIP, stub if not).
+    Writes project.json, a primary .xaml workflow, .xaml files for all reachable
+    sub-bots (full workflow if present in ZIP, stub if not), PDD.md (Process
+    Definition Document with business overview, inputs/outputs, process flow, and
+    migration notes), and ARCHITECTURE.md (bot hierarchy, workflow files, arguments,
+    and NuGet dependencies).
     Mapped steps get real WF4 activities. Partial/unmapped steps become named
     [PARTIAL] or [TODO] Sequence placeholders visible in Studio.
     Returns files written, coverage stats, and manual review notes for every step
     that needs attention.
     """
     return await migration.generate_uipath_template(zip_path, bot_name, output_path)
+
+
+@mcp.tool()
+async def validate_uipath_project(output_path: str) -> dict[str, Any]:
+    """
+    Validate a generated UiPath project folder without UiPath Studio.
+    output_path: directory written by generate_uipath_template.
+    Checks that project.json is complete, all .xaml files are well-formed XML,
+    and every InvokeWorkflowFile reference resolves to a file in the directory.
+    Returns valid (bool), errors, warnings, files_checked, and broken_references.
+    Run this immediately after generate_uipath_template to catch structural problems.
+    """
+    return await uipath_validator.validate_uipath_project(output_path)
 
 
 def main() -> None:

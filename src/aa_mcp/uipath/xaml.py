@@ -17,7 +17,6 @@ Mapping status in generated DisplayNames:
 from __future__ import annotations
 
 import html
-from urllib.parse import unquote
 from typing import Any
 
 from aa_mcp.uipath.mapper import (
@@ -75,8 +74,6 @@ def generate_workflow_xaml(
     """
     class_name = sanitize_filename(workflow_name)
     variables = summary.get("variables", [])
-    error_handling = summary.get("error_handling", {})
-    has_try_catch = error_handling.get("detected", False)
 
     lines: list[str] = []
     lines.append('<?xml version="1.0" encoding="utf-8"?>')

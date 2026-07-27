@@ -166,6 +166,30 @@ _DEFAULT_UIPATH_TYPE = "x:Object"
 
 # ── NuGet version pins ─────────────────────────────────────────────────────────
 
+# ── External system labels (for process summary) ──────────────────────────────
+
+_SYSTEM_MAP: dict[str, str] = {
+    "database":                "Database",
+    "email":                   "Email/SMTP",
+    "excel_ms":                "Excel",
+    "sharepoint":              "SharePoint/Office365",
+    "rest":                    "REST API",
+    "recorder":                "UI Automation",
+    "browser":                 "UI Automation",
+    "keystrokes":              "UI Automation",
+    "mouse":                   "UI Automation",
+    "screen":                  "UI Automation",
+    "window":                  "UI Automation",
+    "imagerecognition":        "UI Automation",
+    "ocr":                     "UI Automation",
+    "credential":              "Credential Vault",
+    "a360credentialutilities": "Credential Vault",
+    "logtofile":               "File Logging",
+}
+
+
+# ── NuGet version pins ─────────────────────────────────────────────────────────
+
 NUGET_VERSIONS: dict[str, str] = {
     "UiPath.System.Activities":             "24.10.2",
     "UiPath.UIAutomation.Activities":       "24.10.6",
@@ -274,12 +298,10 @@ def build_process_summary(
     all_bots: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Analyse a parsed AA bot dict and return a structured ProcessSummary.
+    Build a structured ProcessSummary from a parsed AA bot dict.
 
-    Parameters
-    ----------
     bot:      Bot dict from package_parser (has name, actions, variables, _raw).
-    all_bots: All bots from the same package, for resolving sub-bot names.
+    all_bots: All bots from the same package, used to resolve sub-bot names.
 
     Returns a dict with keys: bot_name, folder_path, overview, variables,
     steps, sub_bots_called, error_handling, external_systems, nuget_packages, stats.
@@ -335,28 +357,10 @@ def build_process_summary(
     }
 
     # External systems
-    _system_map = {
-        "database":              "Database",
-        "email":                 "Email/SMTP",
-        "excel_ms":              "Excel",
-        "sharepoint":            "SharePoint/Office365",
-        "rest":                  "REST API",
-        "recorder":              "UI Automation",
-        "browser":               "UI Automation",
-        "keystrokes":            "UI Automation",
-        "mouse":                 "UI Automation",
-        "screen":                "UI Automation",
-        "window":                "UI Automation",
-        "imagerecognition":      "UI Automation",
-        "ocr":                   "UI Automation",
-        "credential":            "Credential Vault",
-        "a360credentialutilities": "Credential Vault",
-        "logtofile":             "File Logging",
-    }
     ext_systems: list[str] = []
     seen_systems: set[str] = set()
     for step in mapped_steps:
-        label = _system_map.get(step["aa_package"].lower())
+        label = _SYSTEM_MAP.get(step["aa_package"].lower())
         if label and label not in seen_systems:
             seen_systems.add(label)
             ext_systems.append(label)

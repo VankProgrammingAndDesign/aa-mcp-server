@@ -2,7 +2,7 @@
 
 The first open-source MCP server for Automation Anywhere Control Room. Connect Claude Code directly to your Control Room to trigger bots, inspect run history, and query WLM queues.
 
-> **Note:** Automation Anywhere released native inbound MCP support in v38 (their platform receives connections from external agents). This server is the reverse — it exposes Control Room as an MCP tool server so Claude and other MCP clients can drive it directly.
+> **Note:** Automation Anywhere released native inbound MCP support in v38 (their platform receives connections from external agents). This server is the reverse: it exposes Control Room as an MCP tool server so Claude and other MCP clients can drive it directly.
 
 ## Prerequisites
 
@@ -107,6 +107,16 @@ These tools parse local A360 export ZIP files. No Control Room connection requir
 | `get_bot_structure` | Get the full nested action hierarchy including attributes and error handler branches |
 | `search_bot_actions` | Search all bots in a package for actions matching a package or command name |
 
+### UiPath Migration
+
+Convert AA bots to UiPath project templates. No Control Room connection required. The output is a working starting point — mapped steps get real WF4 activities, unmapped steps become `[PARTIAL]` or `[TODO]` Sequence placeholders that are visible and labelled in Studio.
+
+| Tool | Description |
+|---|---|
+| `summarize_bot_process` | Parse an AA bot and return variable mappings with UiPath types, step-by-step activity mappings with status, sub-bots called, external systems, NuGet requirements, and coverage stats. Call this before generating to inspect the mapping. |
+| `generate_uipath_template` | Convert an AA bot to a complete UiPath project folder (project.json + XAML files) ready to open in Studio. Sub-bots present in the ZIP get full workflows; missing ones get stub files. |
+| `validate_uipath_project` | Validate a generated project folder without UiPath Studio. Checks XML well-formedness, project.json completeness, and all InvokeWorkflowFile references. Run immediately after generate_uipath_template. |
+
 ## Example Prompts
 
 **Trigger a bot:**
@@ -131,6 +141,11 @@ Claude calls `list_bots` to find the bot ID, `list_devices` to find the device I
 > "What are the input and output variables for SubTask_Login?"
 > "Show me all the FTP upload actions across every bot in this package"
 > "Walk me through the error handling structure in this bot"
+
+**Convert to UiPath:**
+> "Summarize MasterTask for UiPath migration"
+> "Generate a UiPath template from MasterTask and write it to ~/Desktop/uipath-output"
+> "What steps will need manual work after conversion?"
 
 ## Environment Variables
 

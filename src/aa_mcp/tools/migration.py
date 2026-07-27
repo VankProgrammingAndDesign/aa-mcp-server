@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from aa_mcp import package_parser
-from aa_mcp.uipath import mapper, writer
+from aa_mcp.uipath import docgen, mapper, writer
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +31,11 @@ async def summarize_bot_process(
     """
     Parse an AA bot and return a structured process summary for UiPath migration.
 
-    Provides variable mappings with UiPath argument types, step-by-step activity
+    Returns variable mappings with UiPath argument types, step-by-step activity
     mappings with status (mapped/partial/todo), sub-bots called, error handling
-    pattern, external systems detected, required NuGet packages, and coverage stats.
+    pattern, external systems, required NuGet packages, and coverage stats.
 
-    Call this before generate_uipath_template to review the mapping first.
+    Call this before generate_uipath_template to inspect the mapping first.
     """
     try:
         contents = await asyncio.to_thread(package_parser.extract_package, zip_path)
@@ -46,9 +46,18 @@ async def summarize_bot_process(
     if "error" in bot:
         return bot
 
-    return await asyncio.to_thread(
+    result = await asyncio.to_thread(
         mapper.build_process_summary, bot, contents["bots"]
     )
+
+    # Add in-memory documentation (single-bot view; no recursive BFS here)
+    pdd = await asyncio.to_thread(docgen.generate_pdd, result)
+    arch = await asyncio.to_thread(
+        docgen.generate_architecture_doc,
+        result, {result["bot_name"]: result}, [], [],
+    )
+    result["documentation"] = {"pdd": pdd, "architecture_overview": arch}
+    return result
 
 
 async def generate_uipath_template(

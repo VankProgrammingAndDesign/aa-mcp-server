@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from aa_mcp import package_parser
-from aa_mcp.uipath import mapper, xaml
+from aa_mcp.uipath import docgen, mapper, xaml
 from aa_mcp.uipath.mapper import PARTIAL, TODO, sanitize_filename
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,7 @@ async def generate_project_files(
     summary = await asyncio.to_thread(
         mapper.build_process_summary, master_bot, all_bots
     )
+    all_summaries: dict[str, Any] = {bot_name: summary}
 
     # 4. Build structured node tree for XAML generation
     raw_nodes = master_bot["_raw"].get("nodes", [])
@@ -71,13 +72,21 @@ async def generate_project_files(
     main_filename = sanitize_filename(bot_name) + ".xaml"
     main_xaml = xaml.generate_workflow_xaml(summary, bot_name, structured_nodes)
 
-    # 6. Generate sub-bot XAMLs
+    # 6. Generate sub-bot XAMLs (BFS — recurses into sub-bots of sub-bots)
     files: dict[str, str] = {main_filename: main_xaml}
     sub_bots_generated: list[str] = []
     sub_bots_stubbed: list[str] = []
+    processed_xaml: set[str] = set()  # guards against circular references
 
-    for sub in summary.get("sub_bots_called", []):
+    queue: list[dict[str, Any]] = list(summary.get("sub_bots_called", []))
+    while queue:
+        sub = queue.pop(0)
         xaml_filename = sub["xaml_filename"]
+
+        if xaml_filename in processed_xaml:
+            continue
+        processed_xaml.add(xaml_filename)
+
         resolved_name = sub["resolved_bot_name"]
 
         if resolved_name and resolved_name in all_bots:
@@ -94,6 +103,9 @@ async def generate_project_files(
             )
             files[xaml_filename] = sub_xaml_content
             sub_bots_generated.append(xaml_filename)
+            all_summaries[resolved_name] = sub_summary
+            # Enqueue this sub-bot's own sub-bots
+            queue.extend(sub_summary.get("sub_bots_called", []))
         else:
             # Bot not in package — generate a stub
             stub_summary: dict[str, Any] = {
@@ -112,6 +124,13 @@ async def generate_project_files(
     # 7. Build project.json
     project_json = _build_project_json(summary, main_filename, bot_name)
     files["project.json"] = json.dumps(project_json, indent=2)
+
+    # 7b. Generate documentation
+    files["PDD.md"] = await asyncio.to_thread(docgen.generate_pdd, summary)
+    files["ARCHITECTURE.md"] = await asyncio.to_thread(
+        docgen.generate_architecture_doc,
+        summary, all_summaries, sub_bots_generated, sub_bots_stubbed,
+    )
 
     # 8. Write all files to disk
     await asyncio.to_thread(_write_files, output_path, files)
