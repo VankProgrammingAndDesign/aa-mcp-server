@@ -117,6 +117,8 @@ Convert AA bots to UiPath project templates. No Control Room connection required
 | `generate_uipath_template` | Convert an AA bot to a complete UiPath project folder (project.json + XAML files) ready to open in Studio. Sub-bots present in the ZIP get full workflows; missing ones get stub files. |
 | `validate_uipath_project` | Validate a generated project folder without UiPath Studio. Checks XML well-formedness, project.json completeness, and all InvokeWorkflowFile references. Run immediately after generate_uipath_template. |
 
+> **UiPath output is experimental.** It passes the structural validator but has not been confirmed in a live UiPath Studio/robot. Validation tasks are tracked in [`docs/UIPATH_VALIDATION.md`](docs/UIPATH_VALIDATION.md) and the [`uipath-validation`](https://github.com/VankProgrammingAndDesign/aa-mcp-server/labels/uipath-validation) issues.
+
 ## Example Prompts
 
 **Trigger a bot:**
