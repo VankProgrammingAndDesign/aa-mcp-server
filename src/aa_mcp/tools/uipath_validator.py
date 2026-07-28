@@ -32,6 +32,12 @@ _X_CLASS    = f"{{{_NS_XAML}}}Class"
 
 _REQUIRED_PROJECT_KEYS = ("name", "main", "schemaVersion", "dependencies")
 
+# Recognized UiPath project.json schema versions. Studio's
+# WorkflowDataUpgrade.GetLatestProjectData() reads schemaVersion to detect the
+# project version; an unrecognized value fails to open with
+# "Error detecting project version". Modern Studio (2020.10+) uses "4.0".
+_KNOWN_SCHEMA_VERSIONS = ("3.2", "4.0", "4.1", "4.2")
+
 
 # ── Public entry point ─────────────────────────────────────────────────────────
 
@@ -94,6 +100,24 @@ def _check_project_json(
     for key in _REQUIRED_PROJECT_KEYS:
         if key not in project:
             errors.append(f"project.json missing required key: '{key}'")
+
+    # schemaVersion value — an unrecognized value makes Studio fail to open the
+    # project with "Error detecting project version" (thrown in
+    # WorkflowDataUpgrade.GetLatestProjectData). Presence is already covered above.
+    schema_version = project.get("schemaVersion")
+    if schema_version is not None and schema_version not in _KNOWN_SCHEMA_VERSIONS:
+        major = str(schema_version).split(".")[0]
+        if major.isdigit() and int(major) < 3:
+            errors.append(
+                f"project.json schemaVersion '{schema_version}' is not a valid UiPath "
+                "schema version — Studio will fail to open with 'Error detecting "
+                "project version'. Use '4.0'."
+            )
+        else:
+            warnings.append(
+                f"project.json schemaVersion '{schema_version}' is not a recognized "
+                f"value {list(_KNOWN_SCHEMA_VERSIONS)}; verify it opens in your Studio version."
+            )
 
     # Main XAML exists
     main = project.get("main", "")

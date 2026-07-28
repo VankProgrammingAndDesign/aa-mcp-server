@@ -200,20 +200,26 @@ def _build_project_json(
     ]
 
     return {
-        "schemaVersion": "1.0",
+        # schemaVersion is the version of the project.json schema itself, NOT the
+        # project/studio version. Studio reads it in WorkflowDataUpgrade.
+        # GetLatestProjectData() to detect the project version; an unrecognized
+        # value (e.g. "1.0") throws NotSupportedException: "Error detecting
+        # project version" and the project fails to open. Modern Studio
+        # (2020.10+ through 25.10) uses "4.0".
+        "schemaVersion": "4.0",
         "name": sanitize_filename(bot_name),
         "description": description,
         "projectVersion": "1.0.0",
         "studioVersion": "24.10.0.0",
-        "projectType": "Process",
         "main": main_xaml_filename,
-        "outputType": "Process",
+        "dependencies": dependencies,
+        "webServices": [],
+        "entitiesStores": [],
         "designOptions": {
             "outputType": "Process",
             "resumeOnSameContext": False,
             "pauseActivityScheduling": False,
         },
-        "dependencies": dependencies,
         "entryPoints": [
             {
                 "filePath": main_xaml_filename,
