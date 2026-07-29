@@ -9,7 +9,9 @@ from mcp.server.fastmcp import FastMCP
 from aa_mcp.auth import AuthClient
 from aa_mcp.client import ControlRoomClient
 from aa_mcp.models.config import get_settings
-from aa_mcp.tools import activity, bots, migration, packages, uipath_validator, wlm
+from aa_mcp.tools import (
+    activity, bots, migration, packages, uipath_compile, uipath_validator, wlm,
+)
 
 settings = get_settings()
 
@@ -258,14 +260,42 @@ async def generate_uipath_template(
 @mcp.tool()
 async def validate_uipath_project(output_path: str) -> dict[str, Any]:
     """
-    Validate a generated UiPath project folder without UiPath Studio.
+    Statically validate a generated UiPath project folder without UiPath Studio.
     output_path: directory written by generate_uipath_template.
-    Checks that project.json is complete, all .xaml files are well-formed XML,
-    and every InvokeWorkflowFile reference resolves to a file in the directory.
+    Checks: project.json completeness + schemaVersion + dependency bracket notation +
+    targetFramework/expressionLanguage; every .xaml is well-formed XML with an
+    <Activity> root and x:Class; every InvokeWorkflowFile reference resolves; the
+    modern VisualBasic.Settings="{x:Null}" + TextExpression imports are used (no
+    legacy mva block); and every type argument uses a declared prefix with valid x:
+    intrinsics (catches x:Exception / x:DateTime). Runs anywhere (pure Python).
     Returns valid (bool), errors, warnings, files_checked, and broken_references.
-    Run this immediately after generate_uipath_template to catch structural problems.
+    Run immediately after generate_uipath_template. This is a static check — for a
+    real compile/load gate use compile_check_uipath_project.
     """
     return await uipath_validator.validate_uipath_project(output_path)
+
+
+@mcp.tool()
+async def compile_check_uipath_project(
+    output_path: str,
+    cli_path: str | None = None,
+) -> dict[str, Any]:
+    """
+    Compile-check a generated UiPath project by actually building/packing it with a
+    UiPath CLI — catches load, NuGet-restore, and activity-type errors the static
+    validator cannot. output_path: directory written by generate_uipath_template.
+    cli_path: optional path to `uip`/`uipcli` (else PATH or the AA_UIPATH_CLI env var).
+
+    REQUIRES a **Windows host** (Windows-target projects only build/pack on Windows)
+    and a UiPath CLI installed. When the toolchain isn't available (e.g. on macOS, or
+    no CLI) it returns available=False with a clear reason instead of failing — so it
+    is safe to call anywhere. No UiPath license or Orchestrator auth is needed; restore
+    uses the anonymous public feed.
+
+    Returns available (bool), ran (bool), and — when it ran — success, exit_code,
+    command, and output_tail.
+    """
+    return await uipath_compile.compile_check_uipath_project(output_path, cli_path)
 
 
 def main() -> None:

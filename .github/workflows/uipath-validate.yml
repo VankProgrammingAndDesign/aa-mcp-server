@@ -1,0 +1,59 @@
+name: UiPath validation
+
+# Regression-gates the AA→UiPath generator: it generates a project from a
+# synthetic, committable fixture (scripts/gen_fixture.py) and validates it.
+#   * static  — pure-Python checks (Layer 1), fast, on Linux.
+#   * compile — a real UiPath CLI build (Layer 2), on Windows. Windows-target
+#               projects only build on Windows; restore uses the anonymous
+#               public feed (no license/secrets).
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  static:
+    name: Static validation (Layer 1, Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install package
+        run: pip install -e .
+      - name: Generate project from synthetic fixture
+        run: python scripts/gen_fixture.py fixture_out
+      - name: Static validate
+        run: python scripts/ci_check.py static fixture_out
+
+  compile:
+    name: Compile gate (Layer 2, Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Install package
+        run: pip install -e .
+      # Legacy GA CLI, pinned to the 25.10 line to match the stamped studioVersion
+      # (25.10.1.0). Switch to `uip rpa build` once that CLI is GA.
+      - name: Install UiPath CLI (Windows)
+        run: dotnet tool install --global UiPath.CLI.Windows --version "25.10.*"
+      - name: Add .NET global tools to PATH
+        run: echo "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Generate project from synthetic fixture
+        run: python scripts/gen_fixture.py fixture_out
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ hashFiles('fixture_out/project.json') }}
+          restore-keys: nuget-
+      - name: Compile check (uipcli package pack)
+        run: python scripts/ci_check.py compile fixture_out

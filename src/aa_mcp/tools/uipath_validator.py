@@ -10,7 +10,16 @@ Checks performed:
   6. Every .xaml root element is <Activity>
   7. Every .xaml root has an x:Class attribute
   8. Every WorkflowFileName in InvokeWorkflowFile elements resolves to a file in the directory
+  9. Dependency versions use NuGet bracket notation; targetFramework / expressionLanguage recognized
+ 10. Every .xaml uses the modern VisualBasic.Settings="{x:Null}" + TextExpression imports (no legacy mva block)
+ 11. Every type argument uses a declared xmlns prefix, and x: type args are valid XAML intrinsics
+     (catches e.g. x:Exception / x:DateTime, which must use a System-namespace prefix)
+ 12. Activities with a required argument carry it (Throw→Exception, ForEach→Values,
+     If→Condition) — a missing one is a compile/load error uipcli rejects with
+     "Value for a required activity argument '<arg>' was not supplied"
 
+This is a STATIC check — it does not compile the project. For a real compile/load
+gate, see compile_check_uipath_project (requires a Windows host + UiPath CLI).
 Does not require UiPath Studio or any network access.
 """
 
@@ -19,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
@@ -37,6 +47,40 @@ _REQUIRED_PROJECT_KEYS = ("name", "main", "schemaVersion", "dependencies")
 # project version; an unrecognized value fails to open with
 # "Error detecting project version". Modern Studio (2020.10+) uses "4.0".
 _KNOWN_SCHEMA_VERSIONS = ("3.2", "4.0", "4.1", "4.2")
+
+# Closed sets per UiPath (unknown values warn rather than error).
+_KNOWN_TARGET_FRAMEWORKS = ("Windows", "Legacy", "Portable", "CrossPlatform")
+_KNOWN_EXPRESSION_LANGUAGES = ("VisualBasic", "CSharp")
+
+# NuGet dependency version notation: exact "[x]" or range "[x, )" / "(x, y]".
+_DEP_VERSION_RE = re.compile(r"^[\[(].+[\])]$")
+
+# The closed set of type names in the XAML language namespace (x:) valid as type
+# arguments. Anything else with an x: prefix (e.g. x:Exception, x:DateTime) is NOT
+# a XAML intrinsic and must use a System-namespace prefix — Studio fails to
+# resolve it on load.
+_X_INTRINSICS = frozenset({
+    "Object", "Boolean", "Byte", "Char", "Decimal", "Double", "Int16", "Int32",
+    "Int64", "Single", "String", "TimeSpan", "Uri", "Array", "Type", "List",
+    "Dictionary",
+})
+
+# Type references appear in x:TypeArguments="..." and Type="...Argument(...)".
+_TYPE_ATTR_RE = re.compile(r'(?:x:TypeArguments|\bType)="([^"]*)"')
+_PREFIXED_TYPE_RE = re.compile(r"(\w+):(\w+)")
+_XMLNS_PREFIX_RE = re.compile(r"xmlns:(\w+)\s*=")
+
+# Activities the generator emits that have a REQUIRED argument. A missing one is a
+# load-time compile error (uipcli: "Value for a required activity argument '<arg>'
+# was not supplied") — invisible to well-formedness / type-argument checks. Keyed
+# by element local-name → required argument name (settable as an attribute or a
+# <Element.Arg> property child). Throw/ForEach are CI-confirmed; If→Condition is
+# defensive (the generator always sets it, so it can't false-positive on output).
+_REQUIRED_ACTIVITY_ARGS = {
+    "Throw":   "Exception",
+    "ForEach": "Values",
+    "If":      "Condition",
+}
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -119,10 +163,32 @@ def _check_project_json(
                 f"value {list(_KNOWN_SCHEMA_VERSIONS)}; verify it opens in your Studio version."
             )
 
+    # Dependency versions must use NuGet bracket notation ("[x]" or "[x, )")
+    for dep_name, spec in (project.get("dependencies") or {}).items():
+        if not (isinstance(spec, str) and _DEP_VERSION_RE.match(spec.strip())):
+            errors.append(
+                f"project.json dependency '{dep_name}' has invalid version '{spec}'; "
+                "use exact '[x.y.z]' or minimum '[x.y.z, )' bracket notation."
+            )
+
+    # Enum sanity (warn-only — closed sets, but tolerate variants we don't know)
+    tf = project.get("targetFramework")
+    if tf is not None and tf not in _KNOWN_TARGET_FRAMEWORKS:
+        warnings.append(
+            f"project.json targetFramework '{tf}' is not one of {list(_KNOWN_TARGET_FRAMEWORKS)}."
+        )
+    el = project.get("expressionLanguage")
+    if el is not None and el not in _KNOWN_EXPRESSION_LANGUAGES:
+        warnings.append(
+            f"project.json expressionLanguage '{el}' is not one of {list(_KNOWN_EXPRESSION_LANGUAGES)}."
+        )
+
     # Main XAML exists
     main = project.get("main", "")
     if main and not (directory / main).exists():
         errors.append(f"Main workflow file not found: {main}")
+    elif main and not main.lower().endswith(".xaml"):
+        warnings.append(f"project.json main '{main}' does not end in .xaml.")
 
     # entryPoints cross-check (warning only)
     for ep in project.get("entryPoints", []):
@@ -150,8 +216,9 @@ def _check_xaml_files(
 
         # Check 6: well-formed XML
         try:
+            raw = xaml_path.read_text(encoding="utf-8")
             tree = ET.parse(xaml_path)
-        except ET.ParseError as exc:
+        except (ET.ParseError, OSError) as exc:
             errors.append(f"{fname}: XML parse error — {exc}")
             continue
 
@@ -175,7 +242,87 @@ def _check_xaml_files(
                     f"{fname}: broken InvokeWorkflowFile reference → '{target}'"
                 )
 
+        # Checks 10–11: modern VB settings/imports + type-argument resolution
+        _check_xaml_static(fname, raw, errors, warnings)
+
+        # Check 12: required activity arguments present (Throw/ForEach/If)
+        _check_required_args(fname, tree, errors)
+
     return checked
+
+
+def _local(tag: str) -> str:
+    """Local element/attribute name, stripping any {namespace} prefix."""
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
+def _has_arg(elem: ET.Element, name: str) -> bool:
+    """True if `elem` supplies argument `name` as an attribute or an <Elem.Name> child."""
+    for attr in elem.attrib:
+        if _local(attr) == name:
+            return True
+    target = f"{_local(elem.tag)}.{name}"
+    return any(_local(child.tag) == target for child in elem)
+
+
+def _check_required_args(fname: str, tree: ET.ElementTree, errors: list[str]) -> None:
+    """Flag emitted activities that omit a required argument (a load-time compile error)."""
+    for elem in tree.iter():
+        arg = _REQUIRED_ACTIVITY_ARGS.get(_local(elem.tag))
+        if arg and not _has_arg(elem, arg):
+            dn = elem.get("DisplayName", "")
+            where = f' (DisplayName="{dn}")' if dn else ""
+            errors.append(
+                f"{fname}: <{_local(elem.tag)}>{where} is missing the required "
+                f"'{arg}' argument — the project will not compile (uipcli: \"Value for "
+                f"a required activity argument '{arg}' was not supplied\")."
+            )
+
+
+def _check_xaml_static(
+    fname: str,
+    raw: str,
+    errors: list[str],
+    warnings: list[str],
+) -> None:
+    """String-level XAML checks: modern VB settings/imports + type-arg resolution."""
+    # Check 10: modern imports; no legacy mva:VisualBasicSettings block
+    if "mva:" in raw or "VisualBasicSettings" in raw:
+        errors.append(
+            f"{fname}: legacy mva:VisualBasicSettings block present — rejected by "
+            'Studio 2020.10+ ("Cannot set unknown member ...ImportedNamespaces"). '
+            'Use VisualBasic.Settings="{x:Null}" + TextExpression imports.'
+        )
+    else:
+        if 'VisualBasic.Settings="{x:Null}"' not in raw:
+            warnings.append(
+                f'{fname}: missing VisualBasic.Settings="{{x:Null}}" on the root Activity.'
+            )
+        if "TextExpression.NamespacesForImplementation" not in raw:
+            warnings.append(
+                f"{fname}: missing TextExpression.NamespacesForImplementation imports."
+            )
+
+    # Check 11: every type-argument prefix is declared, and x: type args are intrinsics
+    declared = set(_XMLNS_PREFIX_RE.findall(raw))
+    reported: set[tuple[str, str]] = set()
+    for expr in _TYPE_ATTR_RE.findall(raw):
+        for prefix, tname in _PREFIXED_TYPE_RE.findall(expr):
+            key = (prefix, tname)
+            if key in reported:
+                continue
+            if prefix not in declared:
+                reported.add(key)
+                errors.append(
+                    f"{fname}: type argument '{prefix}:{tname}' uses an undeclared "
+                    f"namespace prefix '{prefix}:'."
+                )
+            elif prefix == "x" and tname not in _X_INTRINSICS:
+                reported.add(key)
+                errors.append(
+                    f"{fname}: '{prefix}:{tname}' is not a valid XAML (x:) intrinsic type; "
+                    f"Studio can't resolve it — use a System-namespace prefix (e.g. s:{tname})."
+                )
 
 
 def _result(
