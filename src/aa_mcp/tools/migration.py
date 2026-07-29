@@ -64,6 +64,9 @@ async def generate_uipath_template(
     zip_path: str,
     bot_name: str,
     output_path: str,
+    reference_project: str | None = None,
+    package_versions: dict[str, str] | None = None,
+    version_constraint: str = "exact",
 ) -> dict[str, Any]:
     """
     Convert an AA bot to a complete UiPath project folder ready to open in Studio.
@@ -76,11 +79,23 @@ async def generate_uipath_template(
     Mapped steps get real WF4 activities (InvokeWorkflowFile, TryCatch, ForEach, If).
     Partial/unmapped steps become named [PARTIAL] or [TODO] Sequence placeholders.
 
+    Optional inputs to match the target Studio environment:
+    - reference_project: path to a real Studio project.json (a file, a project
+      folder, or a .zip); its dependency versions, studioVersion, and
+      schemaVersion are mirrored.
+    - package_versions: explicit {package: version} pins (highest precedence).
+    - version_constraint: 'exact' ([x], default) or 'minimum' ([x, )).
+
     Returns a generation report with files written, coverage stats, and manual review
     notes listing every step that needs attention in Studio.
     """
     try:
-        return await writer.generate_project_files(zip_path, bot_name, output_path)
+        return await writer.generate_project_files(
+            zip_path, bot_name, output_path,
+            reference_project=reference_project,
+            package_versions=package_versions,
+            version_constraint=version_constraint,
+        )
     except (FileNotFoundError, ValueError) as exc:
         return {"error": str(exc), "zip_path": zip_path}
     except OSError as exc:

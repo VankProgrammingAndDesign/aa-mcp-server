@@ -16,6 +16,9 @@ import asyncio
 import json
 import logging
 import os
+import re
+import uuid
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +37,10 @@ async def generate_project_files(
     zip_path: str,
     bot_name: str,
     output_path: str,
+    *,
+    reference_project: str | None = None,
+    package_versions: dict[str, str] | None = None,
+    version_constraint: str = "exact",
 ) -> dict[str, Any]:
     """
     Full pipeline: parse → summarize → generate XAML → write to disk.
@@ -43,9 +50,36 @@ async def generate_project_files(
     zip_path:    Absolute path to the AA A360 export ZIP.
     bot_name:    Exact bot name as returned by load_bot_package.
     output_path: Directory to write the UiPath project into (created if absent).
+    reference_project: Optional path to a real Studio project.json (a file, a
+                 project folder, or a .zip). Its dependency versions,
+                 studioVersion, and schemaVersion are mirrored so the output
+                 matches the target Studio environment.
+    package_versions: Optional explicit {package: version} pins — highest
+                 precedence, overriding both reference_project and the defaults.
+    version_constraint: 'exact' (emit ``[x]``, default) or 'minimum' (``[x, )``).
 
     Returns a generation report dict.
     """
+    # 0. Validate / normalize inputs, then mirror a reference Studio project
+    intake_warnings: list[str] = []
+    if version_constraint not in ("exact", "minimum"):
+        intake_warnings.append(
+            f"Unknown version_constraint '{version_constraint}'; using 'exact' "
+            "(valid values: 'exact', 'minimum')."
+        )
+        version_constraint = "exact"
+    if package_versions:
+        # Strip any NuGet constraint notation from overrides so they match the
+        # (already-normalized) reference_project path and never double-wrap.
+        package_versions = {
+            k: _parse_version_constraint(str(v)) for k, v in package_versions.items()
+        }
+        package_versions = {k: v for k, v in package_versions.items() if v}
+    ref_versions, ref_studio, ref_schema, ref_warnings = (
+        _load_reference_project(reference_project)
+        if reference_project else ({}, None, None, [])
+    )
+
     # 1. Parse the package
     contents = await asyncio.to_thread(package_parser.extract_package, zip_path)
 
@@ -58,7 +92,8 @@ async def generate_project_files(
 
     # 3. Build process summary
     summary = await asyncio.to_thread(
-        mapper.build_process_summary, master_bot, all_bots
+        mapper.build_process_summary, master_bot, all_bots,
+        version_overrides=package_versions, reference_versions=ref_versions,
     )
     all_summaries: dict[str, Any] = {bot_name: summary}
 
@@ -92,7 +127,8 @@ async def generate_project_files(
         if resolved_name and resolved_name in all_bots:
             sub_bot = all_bots[resolved_name]
             sub_summary = await asyncio.to_thread(
-                mapper.build_process_summary, sub_bot, all_bots
+                mapper.build_process_summary, sub_bot, all_bots,
+                version_overrides=package_versions, reference_versions=ref_versions,
             )
             sub_raw = sub_bot["_raw"].get("nodes", [])
             sub_structured = await asyncio.to_thread(
@@ -121,8 +157,37 @@ async def generate_project_files(
             files[xaml_filename] = stub_content
             sub_bots_stubbed.append(xaml_filename)
 
+    # 6b. Aggregate packages across master + every sub-bot (union by name).
+    # `nuget_packages` = all detected packages (documented in ARCHITECTURE.md);
+    # `referenced_packages` = only those a generated (typed) activity actually uses,
+    # which become the project.json dependencies. resolve_package_version is
+    # deterministic per name (first wins). implied = detected − referenced.
+    merged_pkgs: dict[str, str] = {}
+    merged_ref: dict[str, str] = {}
+    for s in all_summaries.values():
+        for pkg in s.get("nuget_packages", []):
+            merged_pkgs.setdefault(pkg["name"], pkg["version"])
+        for pkg in s.get("referenced_packages", []):
+            merged_ref.setdefault(pkg["name"], pkg["version"])
+    summary["nuget_packages"] = [
+        {"name": n, "version": v} for n, v in sorted(merged_pkgs.items())
+    ]
+    summary["referenced_packages"] = [
+        {"name": n, "version": v} for n, v in sorted(merged_ref.items())
+    ]
+    implied_packages = [
+        p for p in summary["nuget_packages"] if p["name"] not in merged_ref
+    ]
+
     # 7. Build project.json
-    project_json = _build_project_json(summary, main_filename, bot_name)
+    project_json = _build_project_json(
+        summary, main_filename, bot_name,
+        version_constraint=version_constraint,
+        studio_version=ref_studio,
+        schema_version=ref_schema,
+        package_versions=package_versions,
+        reference_versions=ref_versions,
+    )
     files["project.json"] = json.dumps(project_json, indent=2)
 
     # 7b. Generate documentation
@@ -137,9 +202,23 @@ async def generate_project_files(
 
     # 9. Build manual review notes
     review_notes = _build_review_notes(summary)
+    if implied_packages:
+        review_notes.insert(0,
+            "Packages the original bot uses but the generated steps only stub as "
+            "placeholders — add them in Studio (Manage Packages) as you implement the "
+            "[PARTIAL]/[TODO] steps: "
+            + ", ".join(f"{p['name']} {p['version']}" for p in implied_packages)
+        )
 
-    # 10. Large-bot warning
-    warnings: list[str] = []
+    # 10. Warnings — input validation, reference-load issues, unresolved package
+    # versions, large bot
+    warnings: list[str] = list(intake_warnings) + list(ref_warnings)
+    seen_warn: set[str] = set(warnings)
+    for s in all_summaries.values():
+        for w in s.get("version_warnings", []):
+            if w not in seen_warn:
+                seen_warn.add(w)
+                warnings.append(w)
     total_steps = summary["stats"]["total_steps"]
     if total_steps > _LARGE_BOT_STEP_THRESHOLD:
         warnings.append(
@@ -155,8 +234,90 @@ async def generate_project_files(
         "sub_bots_stubbed": sub_bots_stubbed,
         "summary": summary,
         "manual_review_notes": review_notes,
+        "suggested_packages": implied_packages,
         "warnings": warnings,
     }
+
+
+# ── Version + reference-project resolution ──────────────────────────────────────
+
+_VERSION_TOKEN = re.compile(r"[0-9][0-9A-Za-z.\-+]*")
+
+
+def _parse_version_constraint(raw: str) -> str:
+    """Strip NuGet constraint notation to a plain version.
+
+    '[25.10.2]' -> '25.10.2', '[25.10.2, )' -> '25.10.2', '2.4.10' -> '2.4.10'.
+    Returns '' when no version token is present.
+    """
+    m = _VERSION_TOKEN.search(raw or "")
+    return m.group(0) if m else ""
+
+
+def _format_dependency_version(version: str, version_constraint: str) -> str:
+    """Wrap a plain version in NuGet constraint notation for project.json."""
+    if version_constraint == "minimum":
+        return f"[{version}, )"
+    return f"[{version}]"  # 'exact' (default)
+
+
+def _load_reference_project(
+    reference_project: str,
+) -> tuple[dict[str, str], str | None, str | None, list[str]]:
+    """
+    Read a real Studio project.json and extract its dependency versions,
+    studioVersion, and schemaVersion so generated projects can mirror the target
+    environment instead of the built-in defaults.
+
+    ``reference_project`` may point at a project.json file, a project folder
+    containing one, or a .zip with one anywhere inside.
+
+    Returns ``(dep_versions, studio_version, schema_version, warnings)``. On any
+    failure returns ``({}, None, None, [warning])`` rather than raising.
+    """
+    warnings: list[str] = []
+    raw: str | None = None
+    p = Path(reference_project)
+    try:
+        if p.is_dir():
+            pj = p / "project.json"
+            raw = pj.read_text(encoding="utf-8") if pj.exists() else None
+        elif p.suffix.lower() == ".zip":
+            with zipfile.ZipFile(p) as zf:
+                names = [n for n in zf.namelist()
+                         if n.rsplit("/", 1)[-1] == "project.json"]
+                if names:
+                    names.sort(key=lambda n: n.count("/"))  # shallowest wins
+                    raw = zf.read(names[0]).decode("utf-8")
+        elif p.exists():
+            raw = p.read_text(encoding="utf-8")
+        else:
+            warnings.append(f"reference_project not found: {reference_project}")
+            return {}, None, None, warnings
+    except (OSError, zipfile.BadZipFile) as exc:
+        warnings.append(
+            f"Could not read reference_project '{reference_project}': {exc}"
+        )
+        return {}, None, None, warnings
+
+    if raw is None:
+        warnings.append(
+            f"No project.json found in reference_project: {reference_project}"
+        )
+        return {}, None, None, warnings
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        warnings.append(f"reference_project project.json is not valid JSON: {exc}")
+        return {}, None, None, warnings
+
+    dep_versions = {
+        name: _parse_version_constraint(str(spec))
+        for name, spec in (data.get("dependencies") or {}).items()
+    }
+    dep_versions = {k: v for k, v in dep_versions.items() if v}
+    return dep_versions, data.get("studioVersion"), data.get("schemaVersion"), warnings
 
 
 # ── project.json builder ───────────────────────────────────────────────────────
@@ -165,6 +326,12 @@ def _build_project_json(
     summary: dict[str, Any],
     main_xaml_filename: str,
     bot_name: str,
+    *,
+    version_constraint: str = "exact",
+    studio_version: str | None = None,
+    schema_version: str | None = None,
+    package_versions: dict[str, str] | None = None,
+    reference_versions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build a valid UiPath project.json manifest."""
     stats = summary.get("stats", {})
@@ -176,16 +343,26 @@ def _build_project_json(
         "Review [PARTIAL] and [TODO] items before execution."
     )
 
-    # Collect dependencies from nuget_packages
-    nuget = summary.get("nuget_packages", [])
+    # Dependencies = only packages a generated (typed) activity actually references
+    # (versions already resolved by the mapper). The bot's other *implied* packages
+    # are labelled placeholders in the XAML, so declaring them would force Studio to
+    # restore packages the scaffold never uses (and break restore where those aren't
+    # available) — they are documented in ARCHITECTURE.md instead.
+    referenced = summary.get("referenced_packages") or summary.get("nuget_packages", [])
     dependencies = {
-        pkg["name"]: f"[{pkg['version']}]"
-        for pkg in nuget
+        pkg["name"]: _format_dependency_version(pkg["version"], version_constraint)
+        for pkg in referenced
     }
-    # Always include System.Activities
+    # Always include System.Activities (resolver-based so an override/reference wins)
     if "UiPath.System.Activities" not in dependencies:
-        version = mapper.NUGET_VERSIONS["UiPath.System.Activities"]
-        dependencies["UiPath.System.Activities"] = f"[{version}]"
+        version, _ = mapper.resolve_package_version(
+            "UiPath.System.Activities",
+            overrides=package_versions,
+            reference_versions=reference_versions,
+        )
+        dependencies["UiPath.System.Activities"] = _format_dependency_version(
+            version, version_constraint
+        )
 
     # Entry point arguments from input/output variables
     entry_inputs = [
@@ -199,39 +376,59 @@ def _build_project_json(
         if v.get("uipath_direction") == "Out"
     ]
 
+    # Structure mirrors a real UiPath Studio 25.10.1 project.json so the output
+    # opens without an upgrade/normalize prompt and restores the LTS-bundled
+    # packages from Studio's local feed. schemaVersion is the schema of THIS file
+    # (read by WorkflowDataUpgrade.GetLatestProjectData to detect the project
+    # version); an unrecognized value (e.g. "1.0") throws NotSupportedException
+    # "Error detecting project version" and the project won't open. 25.10 uses "4.0".
     return {
-        # schemaVersion is the version of the project.json schema itself, NOT the
-        # project/studio version. Studio reads it in WorkflowDataUpgrade.
-        # GetLatestProjectData() to detect the project version; an unrecognized
-        # value (e.g. "1.0") throws NotSupportedException: "Error detecting
-        # project version" and the project fails to open. Modern Studio
-        # (2020.10+ through 25.10) uses "4.0".
-        "schemaVersion": "4.0",
         "name": sanitize_filename(bot_name),
+        "projectId": str(uuid.uuid4()),
         "description": description,
-        "projectVersion": "1.0.0",
-        "studioVersion": "24.10.0.0",
         "main": main_xaml_filename,
         "dependencies": dependencies,
         "webServices": [],
         "entitiesStores": [],
-        "designOptions": {
-            "outputType": "Process",
-            "resumeOnSameContext": False,
-            "pauseActivityScheduling": False,
+        "schemaVersion": schema_version or "4.0",
+        "studioVersion": studio_version or "25.10.1.0",
+        "projectVersion": "1.0.0",
+        "runtimeOptions": {
+            "autoDispose": False,
+            "netFrameworkLazyLoading": False,
+            "isPausable": True,
+            "isAttended": False,
+            "requiresUserInteraction": False,
+            "supportsPersistence": False,
+            "workflowSerialization": "NewtonsoftJson",
+            "excludedLoggedData": ["Private:*", "*password*"],
+            "executionType": "Workflow",
+            "readyForPiP": False,
+            "startsInPiP": False,
+            "mustRestoreAllDependencies": True,
+            "pipType": "ChildSession",
         },
+        "designOptions": {
+            "projectProfile": "Developement",  # UiPath's own spelling — keep for parity
+            "outputType": "Process",
+            "libraryOptions": {"privateWorkflows": []},
+            "processOptions": {"ignoredFiles": []},
+            "fileInfoCollection": [],
+            "saveToCloud": False,
+        },
+        "expressionLanguage": "VisualBasic",
         "entryPoints": [
             {
                 "filePath": main_xaml_filename,
+                "uniqueId": str(uuid.uuid4()),
                 "input": entry_inputs,
                 "output": entry_outputs,
             }
         ],
-        "expressionLanguage": "VisualBasic",
+        "isTemplate": False,
+        "templateProjectData": {},
+        "publishData": {},
         "targetFramework": "Windows",
-        "runtimeOptions": {
-            "requiresUserInteraction": False,
-        },
     }
 
 

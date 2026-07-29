@@ -2,7 +2,7 @@
 UiPath XAML generator.
 
 Converts a structured process summary + raw bot nodes into valid WF4 XAML
-that UiPath Studio 2024.10 can open directly.
+that UiPath Studio 25.10 (Windows / .NET target) can open directly.
 
 Uses string-based generation (not ElementTree) to maintain full control
 over namespace declarations and attribute ordering.
@@ -27,29 +27,82 @@ from aa_mcp.uipath.mapper import (
 
 # ── XML namespace declarations ─────────────────────────────────────────────────
 
+# Namespace prefixes mirror what UiPath Studio 25.10 (Windows / .NET) emits.
+# NB: modern .NET assemblies — scg/sco resolve from System.Private.CoreLib (NOT
+# mscorlib) and sd (System.Data.DataTable) from System.Data.Common (NOT System.Data).
+# There is deliberately NO `mva` (Microsoft.VisualBasic.Activities) prefix: the
+# legacy mva:VisualBasicSettings block is rejected by 25.10 ("Cannot set unknown
+# member ...VisualBasicSettings.ImportedNamespaces"); imports use TextExpression instead.
 _XMLNS = (
     'xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities"'
-    ' xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'
-    ' xmlns:ui="http://schemas.uipath.com/workflow/activities"'
+    ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
     ' xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation"'
     ' xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation"'
-    ' xmlns:mva="clr-namespace:Microsoft.VisualBasic.Activities;assembly=System.Activities"'
-    ' xmlns:scg="clr-namespace:System.Collections.Generic;assembly=mscorlib"'
-    ' xmlns:sd="clr-namespace:System.Data;assembly=System.Data"'
-    ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+    ' xmlns:scg="clr-namespace:System.Collections.Generic;assembly=System.Private.CoreLib"'
+    ' xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=System.Private.CoreLib"'
+    ' xmlns:s="clr-namespace:System;assembly=System.Private.CoreLib"'
+    ' xmlns:sd="clr-namespace:System.Data;assembly=System.Data.Common"'
+    ' xmlns:ui="http://schemas.uipath.com/workflow/activities"'
+    ' xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"'
 )
 
-_VB_SETTINGS = """\
-  <mva:VisualBasic.Settings>
-    <mva:VisualBasicSettings>
-      <mva:VisualBasicSettings.ImportedNamespaces>
-        <mva:VisualBasicImportReference Assembly="mscorlib" Import="System" />
-        <mva:VisualBasicImportReference Assembly="mscorlib" Import="System.Collections.Generic" />
-        <mva:VisualBasicImportReference Assembly="System.Core" Import="System.Linq" />
-        <mva:VisualBasicImportReference Assembly="System.Data" Import="System.Data" />
-      </mva:VisualBasicSettings.ImportedNamespaces>
-    </mva:VisualBasicSettings>
-  </mva:VisualBasic.Settings>"""
+# Modern imports mechanism (replaces the legacy mva:VisualBasicSettings block).
+# The root <Activity> carries VisualBasic.Settings="{x:Null}"; namespace/assembly
+# imports are declared here so VB expressions resolve. A lean, dependency-agnostic
+# core set — always valid; Studio augments it as activities are added.
+_TEXT_EXPRESSION_IMPORTS = """\
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>System.Activities</x:String>
+      <x:String>System.Activities.Statements</x:String>
+      <x:String>System.Activities.Expressions</x:String>
+      <x:String>System.Activities.Validation</x:String>
+      <x:String>System.Activities.XamlIntegration</x:String>
+      <x:String>Microsoft.VisualBasic</x:String>
+      <x:String>Microsoft.VisualBasic.Activities</x:String>
+      <x:String>System</x:String>
+      <x:String>System.Collections</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Collections.ObjectModel</x:String>
+      <x:String>System.Data</x:String>
+      <x:String>System.Diagnostics</x:String>
+      <x:String>System.IO</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>System.Linq.Expressions</x:String>
+      <x:String>System.Net.Mail</x:String>
+      <x:String>System.Xml</x:String>
+      <x:String>System.Xml.Linq</x:String>
+      <x:String>System.Runtime.Serialization</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <TextExpression.ReferencesForImplementation>
+    <sco:Collection x:TypeArguments="AssemblyReference">
+      <AssemblyReference>mscorlib</AssemblyReference>
+      <AssemblyReference>Microsoft.VisualBasic</AssemblyReference>
+      <AssemblyReference>System</AssemblyReference>
+      <AssemblyReference>System.Activities</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.TypeConverter</AssemblyReference>
+      <AssemblyReference>System.Core</AssemblyReference>
+      <AssemblyReference>System.Data</AssemblyReference>
+      <AssemblyReference>System.Data.Common</AssemblyReference>
+      <AssemblyReference>System.Linq</AssemblyReference>
+      <AssemblyReference>System.Linq.Expressions</AssemblyReference>
+      <AssemblyReference>System.Net.Mail</AssemblyReference>
+      <AssemblyReference>System.ObjectModel</AssemblyReference>
+      <AssemblyReference>System.Private.CoreLib</AssemblyReference>
+      <AssemblyReference>System.Private.DataContractSerialization</AssemblyReference>
+      <AssemblyReference>System.Runtime.Serialization.Primitives</AssemblyReference>
+      <AssemblyReference>System.Xaml</AssemblyReference>
+      <AssemblyReference>System.Xml</AssemblyReference>
+      <AssemblyReference>System.Xml.Linq</AssemblyReference>
+      <AssemblyReference>PresentationCore</AssemblyReference>
+      <AssemblyReference>PresentationFramework</AssemblyReference>
+      <AssemblyReference>WindowsBase</AssemblyReference>
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+    </sco:Collection>
+  </TextExpression.ReferencesForImplementation>"""
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -79,6 +132,8 @@ def generate_workflow_xaml(
     lines.append('<?xml version="1.0" encoding="utf-8"?>')
     lines.append(
         f'<Activity mc:Ignorable="sap sap2010" x:Class="{class_name}"'
+        f' VisualBasic.Settings="{{x:Null}}"'
+        f' sap2010:WorkflowViewState.IdRef="ActivityBuilder_1"'
     )
     lines.append(f'  {_XMLNS}>')
 
@@ -96,8 +151,9 @@ def generate_workflow_xaml(
             )
         lines.append("  </x:Members>")
 
-    # VisualBasic settings (needed for VB expressions to resolve)
-    lines.append(_VB_SETTINGS)
+    # Namespace + assembly imports so VB expressions resolve (modern Windows /
+    # .NET form; the legacy mva:VisualBasicSettings block is rejected by 25.10).
+    lines.append(_TEXT_EXPRESSION_IMPORTS)
 
     # Root Sequence
     lines.append(f'  <Sequence DisplayName="{_attr(workflow_name)}">')
@@ -267,11 +323,11 @@ def _write_try_catch(
     lines.append(f"{i1}</TryCatch.Try>")
 
     lines.append(f"{i1}<TryCatch.Catches>")
-    lines.append(f'{i2}<Catch x:TypeArguments="x:Exception">')
-    lines.append(f'{i3}<ActivityAction x:TypeArguments="x:Exception">')
+    lines.append(f'{i2}<Catch x:TypeArguments="s:Exception">')
+    lines.append(f'{i3}<ActivityAction x:TypeArguments="s:Exception">')
     lines.append(f"{i4}<ActivityAction.Argument>")
     lines.append(
-        f'{i5}<DelegateInArgument x:TypeArguments="x:Exception"'
+        f'{i5}<DelegateInArgument x:TypeArguments="s:Exception"'
         f' Name="exception" />'
     )
     lines.append(f"{i4}</ActivityAction.Argument>")

@@ -153,8 +153,8 @@ AA_TYPE_TO_UIPATH: dict[str, str] = {
     "BOOLEAN":    "x:Boolean",
     "LIST":       "scg:List(x:Object)",
     "DICTIONARY": "scg:Dictionary(x:String,x:Object)",
-    "DATE":       "x:DateTime",
-    "DATETIME":   "x:DateTime",
+    "DATE":       "s:DateTime",
+    "DATETIME":   "s:DateTime",
     "TABLE":      "sd:DataTable",
     "CREDENTIAL": "x:String",
     "FILE":       "x:String",
@@ -190,17 +190,48 @@ _SYSTEM_MAP: dict[str, str] = {
 
 # ── NuGet version pins ─────────────────────────────────────────────────────────
 
+# Version pins aligned to a real UiPath Studio 25.10.1 (LTS) environment.
+# The five packages a blank 25.10.1 project ships with are pinned to the exact
+# LTS versions bundled in Studio's local Packages folder, so they restore
+# offline with no feed access; the rest are the latest stable on the Official
+# feed. Sources of truth: a blank 25.10.1 project.json + the Official feed index.
 NUGET_VERSIONS: dict[str, str] = {
-    "UiPath.System.Activities":             "24.10.2",
-    "UiPath.UIAutomation.Activities":       "24.10.6",
-    "UiPath.Excel.Activities":              "2.22.4",
-    "UiPath.Mail.Activities":               "1.23.7",
-    "UiPath.Database.Activities":           "1.10.0",
-    "UiPath.WebAPI.Activities":             "1.14.0",
-    "UiPath.Credentials.Activities":        "2.8.0",
-    "UiPath.MicrosoftOffice365.Activities": "2.9.3",
-    "UiPath.Python.Activities":             "1.8.0",
+    "UiPath.System.Activities":             "25.10.2",   # LTS-bundled (local)
+    "UiPath.UIAutomation.Activities":       "25.10.16",  # LTS-bundled (local)
+    "UiPath.Excel.Activities":              "3.2.1",     # LTS-bundled (local)
+    "UiPath.Mail.Activities":               "2.4.10",    # LTS-bundled (local)
+    "UiPath.Testing.Activities":            "25.10.0",   # LTS-bundled (local)
+    "UiPath.WebAPI.Activities":             "2.5.2",     # latest stable (feed)
+    "UiPath.Database.Activities":           "2.1.1",     # latest stable (feed)
+    "UiPath.Credentials.Activities":        "3.1.1",     # latest stable (feed)
+    "UiPath.MicrosoftOffice365.Activities": "3.10.10",   # latest stable (feed)
+    "UiPath.Python.Activities":             "2.2.1",     # latest stable (feed)
 }
+
+
+def resolve_package_version(
+    pkg_name: str,
+    *,
+    overrides: dict[str, str] | None = None,
+    reference_versions: dict[str, str] | None = None,
+) -> tuple[str, bool]:
+    """
+    Resolve the pinned version for a NuGet package.
+
+    Precedence (highest first): explicit ``overrides`` -> ``reference_versions``
+    (mirrored from a real Studio project) -> the built-in NUGET_VERSIONS table.
+
+    Returns ``(version, is_fallback)``. ``is_fallback`` is True ONLY when the
+    package is unknown to every source and the placeholder ``"1.0.0"`` is used,
+    so callers can surface it instead of silently shipping a bogus pin.
+    """
+    if overrides and pkg_name in overrides:
+        return overrides[pkg_name], False
+    if reference_versions and pkg_name in reference_versions:
+        return reference_versions[pkg_name], False
+    if pkg_name in NUGET_VERSIONS:
+        return NUGET_VERSIONS[pkg_name], False
+    return "1.0.0", True
 
 
 # ── Public helpers ─────────────────────────────────────────────────────────────
@@ -296,6 +327,9 @@ def _map_action(action: dict[str, Any]) -> dict[str, Any]:
 def build_process_summary(
     bot: dict[str, Any],
     all_bots: dict[str, Any],
+    *,
+    version_overrides: dict[str, str] | None = None,
+    reference_versions: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     Build a structured ProcessSummary from a parsed AA bot dict.
@@ -365,19 +399,46 @@ def build_process_summary(
             seen_systems.add(label)
             ext_systems.append(label)
 
-    # NuGet packages (always include System.Activities as base)
+    # NuGet packages (always include System.Activities as base). Versions resolve
+    # through the central resolver (overrides > reference_project > table); any
+    # unknown package is surfaced via version_warnings instead of silently pinned.
+    version_warnings: list[str] = []
+
+    def _resolve(name: str) -> str:
+        version, is_fallback = resolve_package_version(
+            name, overrides=version_overrides, reference_versions=reference_versions
+        )
+        if is_fallback:
+            msg = (
+                f"No pinned version for '{name}'; defaulted to 1.0.0. "
+                "Pass package_versions or a reference_project to set it."
+            )
+            if msg not in version_warnings:
+                version_warnings.append(msg)
+        return version
+
     seen_pkgs: set[str] = {"UiPath.System.Activities"}
     nuget_pkgs: list[dict[str, str]] = [
         {"name": "UiPath.System.Activities",
-         "version": NUGET_VERSIONS["UiPath.System.Activities"]}
+         "version": _resolve("UiPath.System.Activities")}
     ]
     for step in mapped_steps:
         pkg_name = step.get("uipath_package")
         if pkg_name and pkg_name not in seen_pkgs:
             seen_pkgs.add(pkg_name)
-            version = NUGET_VERSIONS.get(pkg_name, "1.0.0")
-            nuget_pkgs.append({"name": pkg_name, "version": version})
+            nuget_pkgs.append({"name": pkg_name, "version": _resolve(pkg_name)})
     nuget_pkgs.sort(key=lambda x: x["name"])
+
+    # Packages actually referenced by a MAPPED (typed) activity — these become the
+    # project.json dependencies. The rest of nuget_packages are "implied" by the
+    # bot's logic but are generated as labelled placeholders, so they are surfaced
+    # as documentation, not hard dependencies. System.Activities is always
+    # referenced (InvokeWorkflowFile + core WF4).
+    ref_names: set[str] = {"UiPath.System.Activities"}
+    for step in mapped_steps:
+        if step.get("mapping_status") == MAPPED and step.get("uipath_package"):
+            ref_names.add(step["uipath_package"])
+    referenced_pkgs = [p for p in nuget_pkgs if p["name"] in ref_names]
 
     # Stats
     active = [s for s in mapped_steps if not s["disabled"]]
@@ -423,5 +484,7 @@ def build_process_summary(
         "error_handling": error_handling,
         "external_systems": ext_systems,
         "nuget_packages": nuget_pkgs,
+        "referenced_packages": referenced_pkgs,
+        "version_warnings": version_warnings,
         "stats":          stats,
     }
