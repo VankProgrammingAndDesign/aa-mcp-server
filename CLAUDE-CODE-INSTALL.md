@@ -5,7 +5,7 @@ Everything you need to connect aa-mcp-server to Claude Code in one place. No oth
 ## Prerequisites
 
 - Python 3.11+ (`python3 --version`)
-- Claude Code installed (`claude --version`)
+- Claude Code installed (`claude --version`) — see the [Claude Code installation guide](https://docs.anthropic.com/en/docs/claude-code) if you need it
 - Git (`git --version`)
 - Your Automation Anywhere Control Room URL, service account username, and API key
   - API key location: Control Room > Settings > Profile > API Key
@@ -53,7 +53,7 @@ Copy the output.
 
 ## 3. Register with Claude Code
 
-### Option A: Ask Claude Code to do it
+### Option A: Ask Claude Code to do it (recommended)
 
 Open a Claude Code session and paste this prompt, filling in your values:
 
@@ -140,6 +140,23 @@ Then re-run Step 3.
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 ```
+
+---
+
+## Offline / analysis-only setup (no Control Room)
+
+The bot-package-analysis and UiPath-migration tools run on local A360 export ZIPs
+with no Control Room connection. To use only those, register with **no
+credentials** — the server starts without them:
+
+```bash
+claude mcp add --scope user automation-anywhere \
+  -- /absolute/path/to/aa-mcp-server/.venv/bin/aa-mcp-server
+```
+
+(Or use the Option A prompt above with no credentials.) The Control Room tools
+return a clear "credentials not configured" error until `AA_CONTROL_ROOM_URL`,
+`AA_USERNAME`, and `AA_API_KEY` are set; analysis and migration tools work regardless.
 
 ---
 

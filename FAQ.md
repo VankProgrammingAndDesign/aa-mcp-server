@@ -131,6 +131,14 @@ A password change on the Control Room account can invalidate the API key. Regene
 
 ## Claude Code integration
 
+**Can I run this without a Control Room (analysis / UiPath migration only)?**
+Yes. The bot-package-analysis tools (`load_bot_package`, `list_bot_actions`, `get_bot_variables`, `get_bot_structure`, `search_bot_actions`) and the UiPath-migration tools (`summarize_bot_process`, `generate_uipath_template`, `validate_uipath_project`) work entirely on local export ZIPs with no Control Room connection or credentials. Just omit the credentials — the server starts without them:
+```bash
+claude mcp add --scope user automation-anywhere \
+  -- /path/to/.venv/bin/aa-mcp-server
+```
+The Control Room tools return a clear "credentials not configured" error until `AA_CONTROL_ROOM_URL`, `AA_USERNAME`, and `AA_API_KEY` are set; the analysis and migration tools work regardless.
+
 **What is the difference between user-level and project-level MCP config?**
 - User-level (`--scope user`): writes to `~/.claude.json`. The server is available in all Claude Code sessions on your machine.
 - Project-level (`--scope project`): writes to `.mcp.json` in the current directory. The server is available only when Claude Code opens that directory. Useful when different projects connect to different Control Rooms.

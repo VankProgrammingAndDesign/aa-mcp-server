@@ -6,13 +6,15 @@ The first open-source MCP server for Automation Anywhere Control Room. Connect C
 
 ## Prerequisites
 
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed — the primary way to install and run this server. See that guide for Claude Code setup; this README does not cover it.
 - Python 3.11+
-- Automation Anywhere Control Room with API access enabled
-- A service account with:
+- **For the Control Room tools only:** Automation Anywhere Control Room with API access enabled, and a service account with:
   - "Run my bots" privilege
   - Bot Runner license
   - AAE_Queue Admin role (for WLM tools)
-- Your API key: Control Room > Settings > Profile > API Key
+  - Your API key: Control Room > Settings > Profile > API Key
+
+> The Bot Package Analysis and UiPath Migration tools need none of the Automation Anywhere items above — see [Setup without a Control Room](#setup-without-a-control-room-offline--analysis-only).
 
 ## Installation
 
@@ -38,13 +40,41 @@ AA_USERNAME=your.username@company.com
 AA_API_KEY=your-40-character-api-key
 ```
 
+## Setup without a Control Room (offline / analysis-only)
+
+The **Bot Package Analysis** and **UiPath Migration** tools run entirely on local A360 export ZIPs — no Control Room connection, credentials, or network. If that's all you need, skip real credentials.
+
+Just **omit** the `AA_*` credentials — the server starts without them:
+
+```bash
+claude mcp add --scope user automation-anywhere \
+  -- /path/to/aa-mcp-server/.venv/bin/aa-mcp-server
+```
+
+(Or ask Claude Code to register it with no credentials.) The Control Room tools (`list_bots`, `deploy_bot`, queues, run history) return a clear "credentials not configured" error until you set `AA_CONTROL_ROOM_URL`, `AA_USERNAME`, and `AA_API_KEY`; the analysis and migration tools work regardless.
+
 ## Connect to Claude Code
 
-### Quick setup
+Claude Code is the primary way to install and run this server. Install Claude Code first if you haven't — see the [Claude Code installation guide](https://docs.anthropic.com/en/docs/claude-code) (this README does not cover installing Claude Code itself).
 
-After installation, register the server with Claude Code. Replace `/path/to/aa-mcp-server` with the absolute path to your cloned repository.
+### Recommended: ask Claude Code to register it
 
-Or open a Claude Code session and ask it. See [CLAUDE-CODE-INSTALL.md](CLAUDE-CODE-INSTALL.md) for a copy-paste prompt.
+After cloning and installing (above), open a Claude Code session and paste this prompt, filling in your values. Use the absolute path to your cloned repo.
+
+```
+Add the aa-mcp-server MCP to my Claude Code config:
+- Server binary: /path/to/aa-mcp-server/.venv/bin/aa-mcp-server
+- AA_CONTROL_ROOM_URL: https://your-tenant.automationanywhere.digital
+- AA_USERNAME: your.username@company.com
+- AA_API_KEY: your-40-character-api-key
+Register it as "automation-anywhere" with --scope user.
+```
+
+Claude Code runs `claude mcp add` for you. Full walkthrough: [CLAUDE-CODE-INSTALL.md](CLAUDE-CODE-INSTALL.md).
+
+### Manual: run the command yourself
+
+Replace `/path/to/aa-mcp-server` with the absolute path to your cloned repository.
 
 ```bash
 claude mcp add --scope user automation-anywhere \
@@ -153,9 +183,9 @@ Claude calls `list_bots` to find the bot ID, `list_devices` to find the device I
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `AA_CONTROL_ROOM_URL` | Yes | — | Base URL, no trailing slash |
-| `AA_USERNAME` | Yes | — | Service account username |
-| `AA_API_KEY` | Yes | — | 40-character API key |
+| `AA_CONTROL_ROOM_URL` | Control Room tools only | — | Base URL, no trailing slash |
+| `AA_USERNAME` | Control Room tools only | — | Service account username |
+| `AA_API_KEY` | Control Room tools only | — | 40-character API key |
 | `AA_TOKEN_REFRESH_BUFFER_SECONDS` | No | 60 | Seconds before expiry to refresh token |
 | `AA_HTTP_TIMEOUT_SECONDS` | No | 30 | Request timeout in seconds |
 | `AA_SSL_VERIFY` | No | true | Set to `false` for self-signed certificates |
@@ -163,7 +193,7 @@ Claude calls `list_bots` to find the bot ID, `list_devices` to find the device I
 
 ## Troubleshooting
 
-**401 errors on startup:**
+**401 errors when calling a Control Room tool:**
 Check that `AA_API_KEY` is correct and API access is enabled in Control Room settings.
 
 **Bot not found:**
