@@ -244,6 +244,12 @@ def _process_node(
         lines.append(f'{i}<Throw DisplayName="{_attr(label)}" />')
         return
 
+    # ── ErrorHandler/throw → Throw ────────────────────────────────────────────
+    if pkg_l == "errorhandler" and cmd_l == "throw":
+        # Raise / re-throw (previously mis-mapped to an empty, no-op TryCatch).
+        lines.append(f'{i}<Throw DisplayName="{_attr(label)}" />')
+        return
+
     # ── ErrorHandler/try → TryCatch ───────────────────────────────────────────
     if pkg_l == "errorhandler":
         _write_try_catch(label, children, branches, lines, indent)
@@ -261,14 +267,28 @@ def _process_node(
             lines.append(f'{i}<Sequence DisplayName="{_attr(label)}" />')
         return
 
+    # ── Loop control (break / continue) → labelled placeholders ──────────────
+    # UiPath Break/Continue are no-config leaf activities, but their exact XAML
+    # element isn't emitted here (avoid a guess that could fail to load) — flag
+    # them for the developer to drop in. (Previously these became empty ForEach
+    # loops, misrepresenting the AA logic.)
+    if pkg_l == "loop" and cmd_l in ("loop.commands.break", "break"):
+        dn = f"[PARTIAL] {label} | AA: {pkg}.{cmd} | Replace with a UiPath Break activity"
+        lines.append(f'{i}<Sequence DisplayName="{_attr(dn)}" />')
+        return
+    if pkg_l == "loop" and cmd_l in ("loop.commands.continue", "continue"):
+        dn = f"[PARTIAL] {label} | AA: {pkg}.{cmd} | Replace with a UiPath Continue activity"
+        lines.append(f'{i}<Sequence DisplayName="{_attr(dn)}" />')
+        return
+
     # ── Loop → ForEach ────────────────────────────────────────────────────────
     if pkg_l == "loop":
         _write_for_each(label, pkg, cmd, children, lines, indent)
         return
 
-    # ── If → If ───────────────────────────────────────────────────────────────
+    # ── If → If (with else-if / else branches) ────────────────────────────────
     if pkg_l == "if":
-        _write_if(label, pkg, cmd, children, lines, indent)
+        _write_if(label, pkg, cmd, children, branches, lines, indent)
         return
 
     # ── General case: container nodes (have children) ─────────────────────────
@@ -380,9 +400,17 @@ def _write_if(
     pkg: str,
     cmd: str,
     children: list[dict[str, Any]],
+    branches: list[dict[str, Any]],
     lines: list[str],
     indent: int,
 ) -> None:
+    """
+    Emit a UiPath If. The AA `if` body becomes If.Then; AA else-if / else
+    `branches` become the If.Else. A UiPath If is binary (Then/Else), so an AA
+    else-if chain is rendered as nested Ifs inside the Else (the terminal AA
+    `else` becomes the innermost Else Sequence). Conditions are stubbed as a
+    [PARTIAL] placeholder for manual mapping in Studio.
+    """
     i0 = _i(indent)
     i1 = _i(indent + 2)
     i2 = _i(indent + 4)
@@ -391,7 +419,7 @@ def _write_if(
     dn = f"[PARTIAL] {label} | AA: {pkg}.{cmd} | Set condition expression"
     lines.append(f'{i0}<If DisplayName="{_attr(dn)}">')
 
-    # Placeholder false condition
+    # Placeholder false condition (set the real expression in Studio)
     lines.append(f"{i1}<If.Condition>")
     lines.append(f'{i2}<InArgument x:TypeArguments="x:Boolean">')
     lines.append(f'{i3}<Literal x:TypeArguments="x:Boolean" Value="False" />')
@@ -405,9 +433,63 @@ def _write_if(
     lines.append(f"{i1}</If.Then>")
 
     lines.append(f"{i1}<If.Else>")
-    lines.append(f'{i2}<Sequence DisplayName="[TODO] Else Block" />')
+    _write_else_chain(branches, lines, indent + 4)
     lines.append(f"{i1}</If.Else>")
 
+    lines.append(f"{i0}</If>")
+
+
+def _write_else_chain(
+    branches: list[dict[str, Any]],
+    lines: list[str],
+    indent: int,
+) -> None:
+    """
+    Render the content of an <If.Else> from an AA else-if / else branch list.
+    `else` → a terminal Sequence; `elseIf` → a nested If whose own Else recurses
+    into the remaining branches. Guarantees every branch step is emitted — the
+    prior generator silently dropped all else / else-if branch steps.
+    """
+    i0 = _i(indent)
+    if not branches:
+        lines.append(f'{i0}<Sequence DisplayName="Else" />')
+        return
+
+    first, rest = branches[0], branches[1:]
+    bcmd = (first.get("command") or "").lower()
+    bchildren = first.get("children", [])
+
+    if bcmd == "else":
+        if bchildren:
+            lines.append(f'{i0}<Sequence DisplayName="Else">')
+            _process_nodes(bchildren, lines, indent + 2)
+            lines.append(f"{i0}</Sequence>")
+        else:
+            lines.append(f'{i0}<Sequence DisplayName="Else" />')
+        return
+
+    # elseIf (or any non-else branch) → nested If, remaining branches in its Else
+    i1 = _i(indent + 2)
+    i2 = _i(indent + 4)
+    i3 = _i(indent + 6)
+    dn = (
+        f"[PARTIAL] Else If | AA: If.{first.get('command', 'elseIf')}"
+        " | Set condition expression"
+    )
+    lines.append(f'{i0}<If DisplayName="{_attr(dn)}">')
+    lines.append(f"{i1}<If.Condition>")
+    lines.append(f'{i2}<InArgument x:TypeArguments="x:Boolean">')
+    lines.append(f'{i3}<Literal x:TypeArguments="x:Boolean" Value="False" />')
+    lines.append(f"{i2}</InArgument>")
+    lines.append(f"{i1}</If.Condition>")
+    lines.append(f"{i1}<If.Then>")
+    lines.append(f'{i2}<Sequence DisplayName="Then">')
+    _process_nodes(bchildren, lines, indent + 6)
+    lines.append(f"{i2}</Sequence>")
+    lines.append(f"{i1}</If.Then>")
+    lines.append(f"{i1}<If.Else>")
+    _write_else_chain(rest, lines, indent + 4)
+    lines.append(f"{i1}</If.Else>")
     lines.append(f"{i0}</If>")
 
 
