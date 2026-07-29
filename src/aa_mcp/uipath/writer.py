@@ -41,9 +41,14 @@ async def generate_project_files(
     reference_project: str | None = None,
     package_versions: dict[str, str] | None = None,
     version_constraint: str = "exact",
+    contents: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Full pipeline: parse → summarize → generate XAML → write to disk.
+
+    ``contents`` is an optional pre-extracted package dict (as returned by
+    package_parser.extract_package); when given, ``zip_path`` is not read — used
+    by tests/CI to generate from a synthetic committable fixture without a ZIP.
 
     Parameters
     ----------
@@ -80,8 +85,9 @@ async def generate_project_files(
         if reference_project else ({}, None, None, [])
     )
 
-    # 1. Parse the package
-    contents = await asyncio.to_thread(package_parser.extract_package, zip_path)
+    # 1. Parse the package (or use pre-extracted contents — e.g. a synthetic fixture)
+    if contents is None:
+        contents = await asyncio.to_thread(package_parser.extract_package, zip_path)
 
     # 2. Find the master bot
     master_bot = _get_bot(contents, bot_name)
