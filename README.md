@@ -145,9 +145,10 @@ Convert AA bots to UiPath project templates. No Control Room connection required
 |---|---|
 | `summarize_bot_process` | Parse an AA bot and return variable mappings with UiPath types, step-by-step activity mappings with status, sub-bots called, external systems, NuGet requirements, and coverage stats. Call this before generating to inspect the mapping. |
 | `generate_uipath_template` | Convert an AA bot to a complete UiPath project folder (project.json + XAML files) ready to open in Studio. Sub-bots present in the ZIP get full workflows; missing ones get stub files. |
-| `validate_uipath_project` | Validate a generated project folder without UiPath Studio. Checks XML well-formedness, project.json completeness, and all InvokeWorkflowFile references. Run immediately after generate_uipath_template. |
+| `validate_uipath_project` | **Static** validation without UiPath Studio (pure Python, runs anywhere). Checks XML well-formedness, project.json completeness + schemaVersion + dependency bracket notation, InvokeWorkflowFile references, the modern `VisualBasic.Settings="{x:Null}"` + TextExpression imports (no legacy `mva` block), and that every type argument uses a declared prefix with valid `x:` intrinsics (catches `x:Exception`/`x:DateTime`). Run immediately after generate_uipath_template. |
+| `compile_check_uipath_project` | **Compile/load gate** — actually builds/packs the project with a UiPath CLI to catch load, NuGet-restore, and activity-type errors the static validator can't. **Requires a Windows host + a UiPath CLI** (`uip`/`uipcli`); Windows-target projects build only on Windows. On macOS/Linux or without a CLI it returns `available: false` with a clear reason (never fails). No license/auth needed. |
 
-> **UiPath output is experimental.** It passes the structural validator but has not been confirmed in a live UiPath Studio/robot. Validation tasks are tracked in [`docs/UIPATH_VALIDATION.md`](docs/UIPATH_VALIDATION.md) and the [`uipath-validation`](https://github.com/VankProgrammingAndDesign/aa-mcp-server/labels/uipath-validation) issues.
+> **UiPath output is experimental.** It passes the static validator; `compile_check_uipath_project` adds a real compile gate where a Windows + CLI host is available. Validation tasks are tracked in [`docs/UIPATH_VALIDATION.md`](docs/UIPATH_VALIDATION.md) and the [`uipath-validation`](https://github.com/VankProgrammingAndDesign/aa-mcp-server/labels/uipath-validation) issues.
 
 ## Example Prompts
 
