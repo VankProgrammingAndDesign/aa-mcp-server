@@ -215,7 +215,12 @@ async def summarize_bot_process(zip_path: str, bot_name: str) -> dict[str, Any]:
 
 @mcp.tool()
 async def generate_uipath_template(
-    zip_path: str, bot_name: str, output_path: str
+    zip_path: str,
+    bot_name: str,
+    output_path: str,
+    reference_project: str | None = None,
+    package_versions: dict[str, str] | None = None,
+    version_constraint: str = "exact",
 ) -> dict[str, Any]:
     """
     Convert an AA bot to a complete UiPath project folder ready to open in Studio.
@@ -228,10 +233,26 @@ async def generate_uipath_template(
     and NuGet dependencies).
     Mapped steps get real WF4 activities. Partial/unmapped steps become named
     [PARTIAL] or [TODO] Sequence placeholders visible in Studio.
-    Returns files written, coverage stats, and manual review notes for every step
-    that needs attention.
+
+    Optional — match a specific Studio environment so the project restores without an
+    upgrade prompt (and, if the versions are locally available, without hitting a feed):
+    - reference_project: path to a real Studio project.json (a file, a project folder,
+      or a .zip) whose dependency versions, studioVersion, and schemaVersion are
+      mirrored. Tip: export a blank project from the target Studio and point at it.
+    - package_versions: explicit {package: version} overrides (highest precedence),
+      e.g. {"UiPath.WebAPI.Activities": "2.5.2"}.
+    - version_constraint: 'exact' (pin [x], default) or 'minimum' ([x, ) — accepts a
+      newer already-installed version).
+
+    Returns files written, coverage stats, and manual review notes (plus any
+    unresolved-version warnings) for every step that needs attention.
     """
-    return await migration.generate_uipath_template(zip_path, bot_name, output_path)
+    return await migration.generate_uipath_template(
+        zip_path, bot_name, output_path,
+        reference_project=reference_project,
+        package_versions=package_versions,
+        version_constraint=version_constraint,
+    )
 
 
 @mcp.tool()

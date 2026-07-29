@@ -93,7 +93,7 @@ def _pdd_header(summary: dict[str, Any]) -> list[str]:
         f"| **Folder** | {folder or '—'} |",
         f"| **Generated** | {today} |",
         "| **Source** | Automation Anywhere A360 |",
-        "| **Target** | UiPath Studio 2024.10 |",
+        "| **Target** | UiPath Studio 25.10 |",
         "",
         "---",
         "",
@@ -351,7 +351,7 @@ def _arch_header(master_summary: dict[str, Any]) -> list[str]:
         "",
         f"Generated: {today}  ",
         "Source: Automation Anywhere A360  ",
-        "Target: UiPath Studio 2024.10",
+        "Target: UiPath Studio 25.10",
         "",
         "---",
         "",
@@ -470,11 +470,23 @@ def _arch_arguments(master_summary: dict[str, Any]) -> list[str]:
 
 def _arch_nuget(master_summary: dict[str, Any]) -> list[str]:
     nuget = master_summary.get("nuget_packages", [])
+    referenced = {p["name"] for p in master_summary.get("referenced_packages", [])}
     lines = ["## 4. NuGet Dependencies", ""]
     if not nuget:
         return lines + ["> No NuGet packages recorded.", ""]
-    lines += _md_table(["Package", "Version"], [[p["name"], p["version"]] for p in nuget])
-    return lines + [""]
+    rows = [
+        [p["name"], p["version"],
+         "Declared" if p["name"] in referenced else "Add when implementing"]
+        for p in nuget
+    ]
+    lines += _md_table(["Package", "Version", "In project.json"], rows)
+    return lines + [
+        "",
+        "> Only **Declared** packages are in `project.json` — the ones a generated "
+        "activity actually references. The rest are implied by the original bot; add "
+        "them in Studio as you replace the `[PARTIAL]`/`[TODO]` placeholders.",
+        "",
+    ]
 
 
 # ── Shared utilities ───────────────────────────────────────────────────────────
