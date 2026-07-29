@@ -105,6 +105,17 @@ _TEXT_EXPRESSION_IMPORTS = """\
   </TextExpression.ReferencesForImplementation>"""
 
 
+# Placeholder VB expressions for activities whose required arguments must be
+# present for the project to COMPILE (uipcli validate rejects a missing required
+# argument, e.g. Throw.Exception / ForEach.Values — a load-time error the static
+# validator can't see). Fully qualified so they resolve regardless of imports;
+# the developer replaces them in Studio (the DisplayName carries the [PARTIAL] hint).
+_THROW_PLACEHOLDER_EXCEPTION = (
+    '[New System.Exception("Re-thrown from AA ErrorHandler - set the real exception")]'
+)
+_FOREACH_PLACEHOLDER_VALUES = "[New System.Collections.Generic.List(Of System.Object)]"
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 def generate_workflow_xaml(
@@ -239,15 +250,27 @@ def _process_node(
         )
         return
 
-    # ── TaskBot/stopTask → Throw ──────────────────────────────────────────────
+    # ── TaskBot/stopTask → labelled placeholder ───────────────────────────────
+    # AA "Stop Task" ends the current task; it is NOT an exception raise (mapping
+    # it to Throw was both semantically wrong and invalid — Throw needs a required
+    # Exception). No clean 1:1 UiPath primitive exists, so emit a placeholder.
     if pkg_l == "taskbot" and cmd_l == "stoptask":
-        lines.append(f'{i}<Throw DisplayName="{_attr(label)}" />')
+        dn = (
+            f"[PARTIAL] {label} | AA: {pkg}.{cmd} |"
+            " Replace with Terminate Workflow or a Should Stop / return"
+        )
+        lines.append(f'{i}<Sequence DisplayName="{_attr(dn)}" />')
         return
 
     # ── ErrorHandler/throw → Throw ────────────────────────────────────────────
     if pkg_l == "errorhandler" and cmd_l == "throw":
         # Raise / re-throw (previously mis-mapped to an empty, no-op TryCatch).
-        lines.append(f'{i}<Throw DisplayName="{_attr(label)}" />')
+        # Throw.Exception is REQUIRED for the project to compile — supply a
+        # placeholder; inside a Catch the developer can bind [exception] instead.
+        lines.append(
+            f'{i}<Throw DisplayName="{_attr(label)}"'
+            f' Exception="{_attr(_THROW_PLACEHOLDER_EXCEPTION)}" />'
+        )
         return
 
     # ── ErrorHandler/try → TryCatch ───────────────────────────────────────────
@@ -378,8 +401,11 @@ def _write_for_each(
     i3 = _i(indent + 6)
 
     dn = f"[PARTIAL] {label} | AA: {pkg}.{cmd} | Bind collection and item variable"
+    # ForEach.Values is REQUIRED for the project to compile — bind an empty
+    # placeholder collection; the developer swaps in the real collection.
     lines.append(
         f'{i0}<ForEach x:TypeArguments="x:Object"'
+        f' Values="{_attr(_FOREACH_PLACEHOLDER_VALUES)}"'
         f' DisplayName="{_attr(dn)}">'
     )
     lines.append(f'{i1}<ActivityAction x:TypeArguments="x:Object">')

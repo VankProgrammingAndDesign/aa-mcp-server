@@ -14,6 +14,9 @@ Checks performed:
  10. Every .xaml uses the modern VisualBasic.Settings="{x:Null}" + TextExpression imports (no legacy mva block)
  11. Every type argument uses a declared xmlns prefix, and x: type args are valid XAML intrinsics
      (catches e.g. x:Exception / x:DateTime, which must use a System-namespace prefix)
+ 12. Activities with a required argument carry it (Throw→Exception, ForEach→Values,
+     If→Condition) — a missing one is a compile/load error uipcli rejects with
+     "Value for a required activity argument '<arg>' was not supplied"
 
 This is a STATIC check — it does not compile the project. For a real compile/load
 gate, see compile_check_uipath_project (requires a Windows host + UiPath CLI).
@@ -66,6 +69,18 @@ _X_INTRINSICS = frozenset({
 _TYPE_ATTR_RE = re.compile(r'(?:x:TypeArguments|\bType)="([^"]*)"')
 _PREFIXED_TYPE_RE = re.compile(r"(\w+):(\w+)")
 _XMLNS_PREFIX_RE = re.compile(r"xmlns:(\w+)\s*=")
+
+# Activities the generator emits that have a REQUIRED argument. A missing one is a
+# load-time compile error (uipcli: "Value for a required activity argument '<arg>'
+# was not supplied") — invisible to well-formedness / type-argument checks. Keyed
+# by element local-name → required argument name (settable as an attribute or a
+# <Element.Arg> property child). Throw/ForEach are CI-confirmed; If→Condition is
+# defensive (the generator always sets it, so it can't false-positive on output).
+_REQUIRED_ACTIVITY_ARGS = {
+    "Throw":   "Exception",
+    "ForEach": "Values",
+    "If":      "Condition",
+}
 
 
 # ── Public entry point ─────────────────────────────────────────────────────────
@@ -230,7 +245,38 @@ def _check_xaml_files(
         # Checks 10–11: modern VB settings/imports + type-argument resolution
         _check_xaml_static(fname, raw, errors, warnings)
 
+        # Check 12: required activity arguments present (Throw/ForEach/If)
+        _check_required_args(fname, tree, errors)
+
     return checked
+
+
+def _local(tag: str) -> str:
+    """Local element/attribute name, stripping any {namespace} prefix."""
+    return tag.split("}")[-1] if "}" in tag else tag
+
+
+def _has_arg(elem: ET.Element, name: str) -> bool:
+    """True if `elem` supplies argument `name` as an attribute or an <Elem.Name> child."""
+    for attr in elem.attrib:
+        if _local(attr) == name:
+            return True
+    target = f"{_local(elem.tag)}.{name}"
+    return any(_local(child.tag) == target for child in elem)
+
+
+def _check_required_args(fname: str, tree: ET.ElementTree, errors: list[str]) -> None:
+    """Flag emitted activities that omit a required argument (a load-time compile error)."""
+    for elem in tree.iter():
+        arg = _REQUIRED_ACTIVITY_ARGS.get(_local(elem.tag))
+        if arg and not _has_arg(elem, arg):
+            dn = elem.get("DisplayName", "")
+            where = f' (DisplayName="{dn}")' if dn else ""
+            errors.append(
+                f"{fname}: <{_local(elem.tag)}>{where} is missing the required "
+                f"'{arg}' argument — the project will not compile (uipcli: \"Value for "
+                f"a required activity argument '{arg}' was not supplied\")."
+            )
 
 
 def _check_xaml_static(
