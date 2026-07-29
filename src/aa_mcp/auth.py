@@ -33,6 +33,16 @@ class AuthClient:
         return self._token  # type: ignore[return-value]
 
     async def _authenticate(self, http_client: httpx.AsyncClient) -> None:
+        if not (
+            self._settings.control_room_url
+            and self._settings.username
+            and self._settings.api_key
+        ):
+            raise AuthenticationError(
+                "Control Room credentials are not configured. Set AA_CONTROL_ROOM_URL, "
+                "AA_USERNAME, and AA_API_KEY to use the Control Room tools. (The "
+                "bot-package-analysis and UiPath-migration tools work without them.)"
+            )
         url = f"{self._settings.control_room_url}/v2/authentication"
         payload = {
             "username": self._settings.username,

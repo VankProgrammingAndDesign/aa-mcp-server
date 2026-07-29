@@ -5,9 +5,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    control_room_url: str
-    username: str
-    api_key: str
+    # Control Room credentials are optional so the server starts with no
+    # configuration — the offline bot-package-analysis and UiPath-migration tools
+    # need no Control Room. The Control Room tools raise a clear error at call
+    # time (see AuthClient._authenticate) if these are unset.
+    control_room_url: str | None = None
+    username: str | None = None
+    api_key: str | None = None
     token_refresh_buffer_seconds: int = 60
     http_timeout_seconds: int = 30
     log_level: str = "WARNING"
@@ -21,8 +25,8 @@ class Settings(BaseSettings):
 
     @field_validator("control_room_url")
     @classmethod
-    def strip_trailing_slash(cls, v: str) -> str:
-        return v.rstrip("/")
+    def strip_trailing_slash(cls, v: str | None) -> str | None:
+        return v.rstrip("/") if v else v
 
 
 @functools.lru_cache(maxsize=1)
