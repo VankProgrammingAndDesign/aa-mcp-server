@@ -52,7 +52,7 @@ async def compile_check_uipath_project(
 
 
 def _compile_check(output_path: str, cli_path: str | None) -> dict[str, Any]:
-    directory = Path(output_path)
+    directory = Path(output_path).resolve()
     pj = directory / "project.json"
     if not pj.exists():
         return {"available": False, "ran": False,
@@ -85,11 +85,14 @@ def _compile_check(output_path: str, cli_path: str | None) -> dict[str, Any]:
         if cli_name == "uip":
             cmd = [cli, "rpa", "build", str(directory)]
         else:  # legacy uipcli
-            cmd = [cli, "package", "pack", str(pj), "-o", tmp]
+            # Pass the project FOLDER (absolute), not project.json: uipcli 25.10's
+            # workspace/telemetry discovery runs Directory.GetDirectories() on this
+            # arg, which throws DirectoryNotFoundException if handed a file path.
+            cmd = [cli, "package", "pack", str(directory), "-o", tmp]
         try:
             proc = subprocess.run(
                 cmd, capture_output=True, text=True,
-                timeout=_PACK_TIMEOUT_SECONDS, cwd=str(directory),
+                timeout=_PACK_TIMEOUT_SECONDS,
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return {"available": True, "ran": False,
